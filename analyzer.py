@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-UniFi Log Analyzer – liest SMTP-Credentials direkt aus der Odysseus-DB,
-verwendet gemma4:12b fuer die Analyse und sendet den Bericht per E-Mail.
+UniFi Log Analyzer – analysiert UniFi-Netzwerk-Logs (via Graylog oder direkt
+vom Controller) mit einem lokalen/entfernten LLM (OpenAI-kompatible API) und
+verschickt den Bericht per E-Mail. Alle Zugangsdaten sind unabhaengig von
+Drittsystemen ueber die GUI konfigurierbar (appconfig.py / settings.json).
 """
 
 import os
-import sys
 import time
-import sqlite3
 import smtplib
 import logging
 import requests
@@ -27,97 +27,56 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Konfiguration aus Umgebungsvariablen ─────────────────────────────────────
-GRAYLOG_HOST     = os.getenv("GRAYLOG_HOST", "graylog")
-GRAYLOG_PORT     = os.getenv("GRAYLOG_PORT", "9000")
-GRAYLOG_USER     = os.getenv("GRAYLOG_USER", "admin")
-GRAYLOG_PASSWORD = os.getenv("GRAYLOG_PASSWORD", "admin")
-GRAYLOG_BASE     = f"http://{GRAYLOG_HOST}:{GRAYLOG_PORT}/api"
-GRAYLOG_AUTH     = (GRAYLOG_USER, GRAYLOG_PASSWORD)
 HEADERS          = {"X-Requested-By": "unifi-analyzer", "Accept": "application/json"}
-
-OLLAMA_HOST      = os.getenv("OLLAMA_HOST", "192.168.1.111")
-OLLAMA_PORT      = os.getenv("OLLAMA_PORT", "11434")
-OLLAMA_MODEL     = os.getenv("OLLAMA_MODEL", "gemma4:12b")
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://lm-studio:1234/v1").rstrip("/")
-ABUSEIPDB_KEY    = os.getenv("ABUSEIPDB_KEY", "")
-
-EMAIL_TO         = os.getenv("EMAIL_TO", "andreas.frei@incendium.eu")
 REPORT_SCHEDULE  = os.getenv("REPORT_SCHEDULE", "08:00")
 
-# Pfad zur Odysseus-Datenbank (als Volume im Container gemountet)
-ODYSSEUS_DB      = os.getenv("ODYSSEUS_DB", "/odysseus/app.db")
 
-# ── SMTP-Credentials aus Odysseus-DB laden ───────────────────────────────────
+# ── Live-Konfiguration (GUI-editierbar, appconfig.py) ────────────────────────
+def _graylog_base():
+    cfg = appconfig.load()
+    return f"http://{cfg['graylog_host']}:{cfg['graylog_port']}/api"
+
+
+def _graylog_auth():
+    cfg = appconfig.load()
+    return (cfg["graylog_user"], cfg["graylog_password"])
+
+
+def get_llm_base_url():
+    return (appconfig.get("llm_base_url") or "http://lm-studio:1234/v1").rstrip("/")
+
+
+def get_abuseipdb_key():
+    return appconfig.get("abuseipdb_key") or ""
+
+
+def get_email_to():
+    return appconfig.get("email_to") or ""
+
+
+# ── SMTP-Konfiguration (rein GUI-basiert, kein Drittsystem noetig) ───────────
 def get_smtp_config():
-    """Liest SMTP-Konfiguration direkt aus der Odysseus SQLite-Datenbank."""
-    try:
-        conn = sqlite3.connect(ODYSSEUS_DB)
-        cur = conn.cursor()
-        cur.execute("""
-            SELECT smtp_host, smtp_port, smtp_user, smtp_password,
-                   smtp_security, from_address
-            FROM email_accounts
-            WHERE is_default = 1 OR enabled = 1
-            ORDER BY is_default DESC
-            LIMIT 1
-        """)
-        row = cur.fetchone()
-        conn.close()
-
-        if not row:
-            log.error("Kein aktiver E-Mail-Account in Odysseus-DB gefunden.")
-            return None
-
-        smtp_host, smtp_port, smtp_user, smtp_password_enc, smtp_security, from_addr = row
-
-        # Passwort entschluesseln (Odysseus nutzt Fernet-Verschluesselung)
-        # ENV-Variable hat Vorrang (aus Odysseus vorab extrahiert)
-        env_pw = os.getenv("SMTP_PASSWORD", "")
-        password = env_pw if env_pw else _decrypt_odysseus_password(smtp_password_enc)
-
-        return {
-            "host":     smtp_host,
-            "port":     int(smtp_port or 465),
-            "user":     smtp_user,
-            "password": password,
-            "security": smtp_security or "ssl",
-            "from":     from_addr or smtp_user,
-        }
-    except Exception as e:
-        log.error(f"Fehler beim Lesen der Odysseus-DB: {e}")
+    """Liest SMTP-Konfiguration aus den GUI-Einstellungen (appconfig)."""
+    cfg = appconfig.load()
+    host = (cfg.get("smtp_host") or "").strip()
+    user = (cfg.get("smtp_user") or "").strip()
+    if not host or not user:
+        log.error("Keine SMTP-Konfiguration hinterlegt (siehe GUI unter 'E-Mail / SMTP').")
         return None
+    return {
+        "host":     host,
+        "port":     int(cfg.get("smtp_port") or 465),
+        "user":     user,
+        "password": cfg.get("smtp_password") or "",
+        "security": cfg.get("smtp_security") or "ssl",
+        "from":     cfg.get("smtp_from") or user,
+    }
 
 
-def _decrypt_odysseus_password(encrypted):
-    """Liest Passwort aus Env-Variable oder entschluesselt via Odysseus."""
-    # Zuerst direkt aus Env-Variable (von Odysseus vorab extrahiert)
-    env_pw = os.getenv("SMTP_PASSWORD", "")
-    if env_pw:
-        return env_pw
-    if not encrypted:
-        return ""
-    try:
-        import sys
-        ODYSSEUS_APP = os.getenv("ODYSSEUS_APP", "/odysseus/app")
-        if ODYSSEUS_APP not in sys.path:
-            sys.path.insert(0, ODYSSEUS_APP)
-        from routes.email_helpers import _decrypt
-        return _decrypt(encrypted)
-    except Exception as e:
-        log.warning(f"Odysseus _decrypt fehlgeschlagen ({e}) – versuche Klartext.")
-        return encrypted
-
-
-def _get_odysseus_key():
-    return None  # Nicht benoetigt – wird von _decrypt intern gehandhabt
-
-
-# ── Graylog: Logs holen ───────────────────────────────────────────────────────
+# ── Log-Quelle 1: Graylog ─────────────────────────────────────────────────────
 def fetch_logs_from_graylog(hours=24):
-    """Holt UniFi-Logs der letzten N Stunden aus Graylog."""
+    """Holt UniFi-Logs der letzten N Stunden aus Graylog, normalisiert."""
     try:
-        from_ts = int((datetime.utcnow() - timedelta(hours=hours)).timestamp() * 1000)
         params = {
             "query":   "*",
             "range":   hours * 3600,
@@ -126,35 +85,91 @@ def fetch_logs_from_graylog(hours=24):
             "filter":  "streams:*",
         }
         resp = requests.get(
-            f"{GRAYLOG_BASE}/search/universal/relative",
-            auth=GRAYLOG_AUTH,
+            f"{_graylog_base()}/search/universal/relative",
+            auth=_graylog_auth(),
             headers=HEADERS,
             params=params,
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
-        messages = data.get("messages", [])
-        log.info(f"{len(messages)} Log-Eintraege aus Graylog geladen.")
-        return messages
+        raw = data.get("messages", [])
+        log.info(f"{len(raw)} Log-Eintraege aus Graylog geladen.")
+        out = []
+        for m in raw:
+            msg = m.get("message", {})
+            out.append({
+                "timestamp": (msg.get("timestamp") or "")[:19],
+                "source":    msg.get("source", "unbekannt"),
+                "level":     msg.get("level", ""),
+                "message":   msg.get("message", msg.get("short_message", "")),
+            })
+        return out
     except Exception as e:
         log.error(f"Fehler beim Abrufen der Graylog-Logs: {e}")
         return []
 
 
-def format_logs_for_analysis(messages):
-    """Formatiert Graylog-Nachrichten fuer die LLM-Analyse."""
-    if not messages:
+# ── Log-Quelle 2: UniFi-Controller direkt (Best-Effort) ──────────────────────
+def fetch_logs_from_unifi_direct(hours=24):
+    """Holt Events/Alarme direkt vom UniFi-Controller (ohne Graylog).
+
+    Nutzt die gleichen unifi_host/unifi_api_key-Einstellungen wie die
+    Gateway-IP-Sperrung. Diese Endpunkte gehoeren zur aelteren, nicht offiziell
+    dokumentierten Controller-API (nicht Teil der Integration-API v1) und
+    koennen je nach Controller-/Firmware-Version abweichen."""
+    cfg = appconfig.load()
+    host = (cfg.get("unifi_host") or "").strip()
+    key = (cfg.get("unifi_api_key") or "").strip()
+    if not host or not key:
+        log.error("unifi_host/unifi_api_key fehlt – kann Logs nicht direkt vom Controller holen.")
+        return []
+    try:
+        cli = unifi_block.UniFiClient(host, key)
+        cli.resolve_site()
+        events = cli.get_events(hours=hours)
+        alarms = cli.get_alarms(hours=hours)
+        log.info(f"{len(events)} Events, {len(alarms)} Alarme direkt vom UniFi-Controller geladen.")
+
+        def _normalize(raw_list, level):
+            result = []
+            for e in raw_list:
+                ts_ms = e.get("time") or e.get("datetime") or 0
+                try:
+                    ts = datetime.utcfromtimestamp(int(ts_ms) / 1000).strftime("%Y-%m-%dT%H:%M:%S") if ts_ms else ""
+                except Exception:
+                    ts = ""
+                result.append({
+                    "timestamp": ts,
+                    "source":    e.get("subsystem") or e.get("key") or "unifi",
+                    "level":     level,
+                    "message":   e.get("msg") or e.get("key") or str(e),
+                })
+            return result
+
+        return _normalize(events, "event") + _normalize(alarms, "alarm")
+    except Exception as e:
+        log.error(f"Fehler beim direkten Abruf vom UniFi-Controller: {e}")
+        return []
+
+
+def fetch_logs(hours=24):
+    """Dispatcht auf die in der GUI gewaehlte Log-Quelle."""
+    source = appconfig.get("log_source") or "graylog"
+    if source == "unifi_direct":
+        return fetch_logs_from_unifi_direct(hours=hours)
+    return fetch_logs_from_graylog(hours=hours)
+
+
+def format_logs_for_analysis(entries):
+    """Formatiert normalisierte Log-Eintraege fuer die LLM-Analyse."""
+    if not entries:
         return "Keine Log-Eintraege vorhanden."
 
     lines = []
-    for m in messages[:300]:  # Max 300 Eintraege
-        msg = m.get("message", {})
-        ts      = msg.get("timestamp", "")[:19]
-        source  = msg.get("source", "unbekannt")
-        level   = msg.get("level", "")
-        message = msg.get("message", msg.get("short_message", ""))
-        lines.append(f"[{ts}] [{source}] [{level}] {message}")
+    for e in entries[:300]:  # Max 300 Eintraege
+        lines.append(f"[{e.get('timestamp','')}] [{e.get('source','unbekannt')}] "
+                      f"[{e.get('level','')}] {e.get('message','')}")
 
     return "\n".join(lines)
 
@@ -185,13 +200,14 @@ def extract_public_ips(log_text, limit=5):
     return seen
 
 def check_ip_reputation(ip):
-    if not ABUSEIPDB_KEY:
+    key = get_abuseipdb_key()
+    if not key:
         return None
     try:
         r = requests.get(
             "https://api.abuseipdb.com/api/v2/check",
             params={"ipAddress": ip, "maxAgeInDays": 90},
-            headers={"Key": ABUSEIPDB_KEY, "Accept": "application/json"},
+            headers={"Key": key, "Accept": "application/json"},
             timeout=15,
         )
         r.raise_for_status()
@@ -237,7 +253,7 @@ def _run_unifi_block(candidate_ips):
 
 
 def build_threat_intel(log_text):
-    if not ABUSEIPDB_KEY:
+    if not get_abuseipdb_key():
         return ""
     ips = extract_public_ips(log_text)
     if not ips:
@@ -264,7 +280,7 @@ def build_threat_intel(log_text):
     return intel
 
 def analyze_with_llm(log_text):
-    """Analysiert die Logs mit dem lokalen Ollama-Modell."""
+    """Analysiert die Logs mit dem konfigurierten LLM (OpenAI-kompatible API)."""
     if not log_text or log_text == "Keine Log-Eintraege vorhanden.":
         return "Keine Logs zum Analysieren vorhanden."
 
@@ -288,9 +304,9 @@ Erstelle einen prägnanten, informativen Bericht auf Deutsch:"""
 
     try:
         resp = requests.post(
-            f"{LM_STUDIO_BASE_URL}/chat/completions",
+            f"{get_llm_base_url()}/chat/completions",
             json={
-                "model": appconfig.get("ollama_model") or OLLAMA_MODEL,
+                "model": get_active_model(),
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
                 "max_tokens": 4096,
@@ -309,12 +325,13 @@ Erstelle einen prägnanten, informativen Bericht auf Deutsch:"""
         return f"Fehler bei der KI-Analyse: {e}"
 
 
-# ── E-Mail senden via Odysseus-SMTP-Config ────────────────────────────────────
+# ── E-Mail senden (SMTP-Config aus der GUI) ──────────────────────────────────
 def send_email_report(analysis):
-    """Sendet den Analysebericht per E-Mail – SMTP-Config aus Odysseus-DB."""
+    """Sendet den Analysebericht per E-Mail – SMTP-Config aus der GUI."""
     smtp = get_smtp_config()
-    if not smtp:
-        log.error("SMTP-Konfiguration konnte nicht geladen werden – E-Mail wird nicht gesendet.")
+    email_to = get_email_to()
+    if not smtp or not email_to:
+        log.error("SMTP-Konfiguration/Empfaenger fehlt (siehe GUI unter 'E-Mail / SMTP') – E-Mail wird nicht gesendet.")
         return False
 
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -341,18 +358,18 @@ def send_email_report(analysis):
   <h2>🔍 UniFi Netzwerk-Analyse</h2>
   <div class="meta">
     <b>Datum:</b> {now} &nbsp;|&nbsp;
-    <b>Modell:</b> {OLLAMA_MODEL} &nbsp;|&nbsp;
+    <b>Modell:</b> {get_active_model()} &nbsp;|&nbsp;
     <b>Analysezeitraum:</b> Letzte 24 Stunden
   </div>
   <div class="content">{html_analysis}</div>
-  <div class="footer">Automatisch generiert von UniFi-Analyzer | Odysseus-KI-System</div>
+  <div class="footer">Automatisch generiert von UniFi-Analyzer</div>
 </body>
 </html>"""
 
     try:
         msg = MIMEMultipart("alternative")
         msg["From"]    = smtp["from"]
-        msg["To"]      = EMAIL_TO
+        msg["To"]      = email_to
         msg["Subject"] = subject
         msg.attach(MIMEText(analysis, "plain", "utf-8"))
         msg.attach(MIMEText(html_body, "html", "utf-8"))
@@ -360,14 +377,19 @@ def send_email_report(analysis):
         if smtp["security"] == "ssl":
             with smtplib.SMTP_SSL(smtp["host"], smtp["port"], timeout=30) as server:
                 server.login(smtp["user"], smtp["password"])
-                server.sendmail(smtp["from"], EMAIL_TO, msg.as_string())
-        else:
+                server.sendmail(smtp["from"], email_to, msg.as_string())
+        elif smtp["security"] == "starttls":
             with smtplib.SMTP(smtp["host"], smtp["port"], timeout=30) as server:
                 server.starttls()
                 server.login(smtp["user"], smtp["password"])
-                server.sendmail(smtp["from"], EMAIL_TO, msg.as_string())
+                server.sendmail(smtp["from"], email_to, msg.as_string())
+        else:
+            with smtplib.SMTP(smtp["host"], smtp["port"], timeout=30) as server:
+                if smtp["password"]:
+                    server.login(smtp["user"], smtp["password"])
+                server.sendmail(smtp["from"], email_to, msg.as_string())
 
-        log.info(f"E-Mail-Bericht erfolgreich an {EMAIL_TO} gesendet.")
+        log.info(f"E-Mail-Bericht erfolgreich an {email_to} gesendet.")
         return True
     except Exception as e:
         log.error(f"Fehler beim Senden der E-Mail: {e}")
@@ -376,7 +398,7 @@ def send_email_report(analysis):
 
 # ── Hauptanalyse ──────────────────────────────────────────────────────────────
 def get_active_model():
-    return appconfig.get("ollama_model") or OLLAMA_MODEL
+    return appconfig.get("ollama_model") or "gemma4:12b"
 
 
 def get_active_schedule():
@@ -384,9 +406,9 @@ def get_active_schedule():
 
 
 def list_ollama_models():
-    """Holt die in LM Studio geladenen Modelle (OpenAI-kompatible API)."""
+    """Holt die am konfigurierten LLM-Endpoint geladenen Modelle (OpenAI-kompatible API)."""
     try:
-        r = requests.get(f"{LM_STUDIO_BASE_URL}/models", timeout=10)
+        r = requests.get(f"{get_llm_base_url()}/models", timeout=10)
         r.raise_for_status()
         models = [m.get("id") for m in r.json().get("data", []) if m.get("id")]
         return sorted(models)
@@ -408,7 +430,7 @@ def run_analysis():
     log.info("=== Starte taegliche UniFi-Netzwerkanalyse ===")
     webui.record_start()
     try:
-        messages  = fetch_logs_from_graylog(hours=24)
+        messages  = fetch_logs(hours=24)
         log_text  = format_logs_for_analysis(messages)
         analysis  = analyze_with_llm(log_text)
         send_email_report(analysis)
@@ -425,7 +447,7 @@ def wait_for_graylog():
     log.info("Warte auf Graylog...")
     for i in range(30):
         try:
-            resp = requests.get(f"{GRAYLOG_BASE}/system", auth=GRAYLOG_AUTH, headers=HEADERS, timeout=5)
+            resp = requests.get(f"{_graylog_base()}/system", auth=_graylog_auth(), headers=HEADERS, timeout=5)
             if resp.status_code == 200:
                 log.info("Graylog ist bereit!")
                 return True
@@ -437,50 +459,64 @@ def wait_for_graylog():
     return False
 
 
+def get_settings_snapshot():
+    cfg = appconfig.load()
+    return {
+        "schedule": get_active_schedule(),
+        "email": get_email_to(),
+        "model": get_active_model(),
+        "abuseipdb": bool(get_abuseipdb_key()),
+        "log_source": cfg.get("log_source"),
+        "graylog_host": cfg.get("graylog_host"),
+        "graylog_port": cfg.get("graylog_port"),
+        "graylog_user": cfg.get("graylog_user"),
+        "graylog_password": cfg.get("graylog_password"),
+        "llm_base_url": cfg.get("llm_base_url"),
+        "abuseipdb_key": cfg.get("abuseipdb_key"),
+        "smtp_host": cfg.get("smtp_host"),
+        "smtp_port": cfg.get("smtp_port"),
+        "smtp_user": cfg.get("smtp_user"),
+        "smtp_password": cfg.get("smtp_password"),
+        "smtp_security": cfg.get("smtp_security"),
+        "smtp_from": cfg.get("smtp_from"),
+        "email_to": cfg.get("email_to"),
+        "unifi_block_enabled": cfg.get("unifi_block_enabled"),
+        "unifi_dry_run": cfg.get("unifi_dry_run"),
+        "unifi_host": cfg.get("unifi_host"),
+        "unifi_api_key": cfg.get("unifi_api_key"),
+        "unifi_block_threshold": cfg.get("unifi_block_threshold"),
+        "unifi_allowlist": cfg.get("unifi_allowlist"),
+    }
+
+
 # ── Entry Point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     log.info("UniFi-Analyzer gestartet.")
-    log.info(f"Graylog:  {GRAYLOG_HOST}:{GRAYLOG_PORT}")
-    log.info(f"Ollama:   {OLLAMA_HOST}:{OLLAMA_PORT}  Modell: {OLLAMA_MODEL}")
-    log.info(f"E-Mail:   {EMAIL_TO}")
+    log.info(f"Log-Quelle: {appconfig.get('log_source')}")
+    log.info(f"Graylog:  {appconfig.get('graylog_host')}:{appconfig.get('graylog_port')}")
+    log.info(f"LLM:      {get_llm_base_url()}  Modell: {get_active_model()}")
+    log.info(f"E-Mail:   {get_email_to() or '(nicht konfiguriert)'}")
     log.info(f"Bericht:  taeglich um {REPORT_SCHEDULE}")
-    log.info(f"Odysseus-DB: {ODYSSEUS_DB}")
 
     # SMTP-Config beim Start pruefen
     smtp_cfg = get_smtp_config()
     if smtp_cfg:
         log.info(f"SMTP:     {smtp_cfg['host']}:{smtp_cfg['port']} als {smtp_cfg['user']} ✓")
     else:
-        log.warning("SMTP-Konfiguration konnte nicht aus Odysseus-DB geladen werden!")
+        log.warning("SMTP-Konfiguration fehlt noch – bitte in der GUI unter 'E-Mail / SMTP' eintragen.")
 
-    if not wait_for_graylog():
+    if appconfig.get("log_source") == "graylog" and not wait_for_graylog():
         log.warning("Starte trotzdem – Graylog wird moeglicherweise spaeter verfuegbar.")
 
     # Status-Webserver fuer Unraid-WebUI starten
     webui.set_run_callback(run_analysis)
     webui.set_settings_callbacks(
-        get_settings=lambda: {
-            "schedule": get_active_schedule(),
-            "email": EMAIL_TO,
-            "model": get_active_model(),
-            "abuseipdb": bool(ABUSEIPDB_KEY),
-            "unifi_block_enabled": appconfig.get("unifi_block_enabled"),
-            "unifi_dry_run": appconfig.get("unifi_dry_run"),
-            "unifi_host": appconfig.get("unifi_host"),
-            "unifi_api_key": appconfig.get("unifi_api_key"),
-            "unifi_block_threshold": appconfig.get("unifi_block_threshold"),
-            "unifi_allowlist": appconfig.get("unifi_allowlist"),
-        },
+        get_settings=get_settings_snapshot,
         list_models=list_ollama_models,
         apply_settings=apply_settings,
     )
     try:
-        webui.start({
-            "schedule": get_active_schedule(),
-            "email": EMAIL_TO,
-            "model": get_active_model(),
-            "abuseipdb": bool(ABUSEIPDB_KEY),
-        }, port=8088)
+        webui.start(get_settings_snapshot(), port=8088)
         log.info("Status-WebUI laeuft auf Port 8088")
     except Exception as e:
         log.warning(f"WebUI konnte nicht gestartet werden: {e}")

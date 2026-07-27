@@ -14,6 +14,7 @@ Konfiguration kommt aus appconfig (GUI-editierbar):
 """
 import ipaddress
 import logging
+import time as _time
 import requests
 import urllib3
 
@@ -27,7 +28,8 @@ GATEWAY_ZONE = "Gateway"     # Ziel: das Gateway selbst
 
 class UniFiClient:
     def __init__(self, host, api_key, verify=False, timeout=15):
-        self.base = host.rstrip("/") + "/proxy/network/integration/v1"
+        self.host = host.rstrip("/")
+        self.base = self.host + "/proxy/network/integration/v1"
         self.s = requests.Session()
         self.s.headers.update({"X-API-KEY": api_key, "Accept": "application/json"})
         self.verify = verify
@@ -48,6 +50,31 @@ class UniFiClient:
         r = self.s.put(self.base + path, json=body, verify=self.verify, timeout=self.timeout)
         r.raise_for_status()
         return r.json()
+
+    def _post_legacy(self, path, body):
+        """Wie _post(), aber gegen die klassische Controller-API (nicht unter
+        /integration/v1/), siehe get_events()/get_alarms()."""
+        r = self.s.post(self.host + path, json=body, verify=self.verify, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def get_events(self, hours=24, limit=500):
+        """Best-Effort: klassische (nicht offiziell dokumentierte) Controller-API
+        unter /proxy/network/api/ (nicht Teil der Integration-API v1).
+        Muss ggf. je nach Controller-/Firmware-Version angepasst werden."""
+        end = int(_time.time() * 1000)
+        start = end - hours * 3600 * 1000
+        path = f"/proxy/network/api/s/{self.site_id}/stat/event"
+        body = {"start": start, "end": end, "_limit": limit}
+        return self._post_legacy(path, body).get("data", [])
+
+    def get_alarms(self, hours=24, limit=500):
+        """Best-Effort, siehe get_events()."""
+        end = int(_time.time() * 1000)
+        start = end - hours * 3600 * 1000
+        path = f"/proxy/network/api/s/{self.site_id}/stat/alarm"
+        body = {"start": start, "end": end, "_limit": limit}
+        return self._post_legacy(path, body).get("data", [])
 
     def resolve_site(self):
         data = self._get("/sites").get("data", [])
