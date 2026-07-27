@@ -198,7 +198,7 @@ PAGE = """<!DOCTYPE html>
    <label for="llmurl">LLM-Endpoint (OpenAI-kompatibel, z.B. LM Studio/Ollama/OpenAI)</label>
    <input type="text" name="llm_base_url" id="llmurl" value="{llm_base_url}" placeholder="http://lm-studio:1234/v1">
    <button type="button" class="btn-secondary" onclick="testLLM()">Verbindung testen &amp; Modelle laden</button>
-   <span id="llmTestResult" class="muted"></span>
+   <div id="llmTestResult" class="muted"></div>
    <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
    <input type="text" name="ollama_model" id="model" list="model_list" value="{model}">
    <datalist id="model_list">{model_options}</datalist>
