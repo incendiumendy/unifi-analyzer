@@ -154,22 +154,17 @@ PAGE = """<!DOCTYPE html>
        opt.value = m;
        dl.appendChild(opt);
       }});
-      const picker = document.getElementById('modelPicker');
-      picker.innerHTML = '<option value="">-- gefundenes Modell waehlen --</option>';
-      data.models.forEach(function(m){{
-       const opt = document.createElement('option');
-       opt.value = m;
-       opt.textContent = m;
-       picker.appendChild(opt);
-      }});
-      picker.style.display = '';
      }}
     }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
    }}
 
-   function onModelPick(){{
-    const v = document.getElementById('modelPicker').value;
-    if(v){{ document.getElementById('model').value = v; }}
+   function onModelFocus(el){{
+    el.dataset.prev = el.value;
+    el.value = '';
+   }}
+
+   function onModelBlur(el){{
+    if(el.value.trim() === ''){{ el.value = el.dataset.prev || ''; }}
    }}
 
    function onPromptSelect(){{
@@ -214,9 +209,8 @@ PAGE = """<!DOCTYPE html>
    <button type="button" class="btn-secondary" onclick="testLLM()">Verbindung testen &amp; Modelle laden</button>
    <div id="llmTestResult" class="muted"></div>
    <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
-   <input type="text" name="ollama_model" id="model" list="model_list" value="{model}">
+   <input type="text" name="ollama_model" id="model" list="model_list" value="{model}" onfocus="onModelFocus(this)" onblur="onModelBlur(this)">
    <datalist id="model_list">{model_options}</datalist>
-   <select id="modelPicker" onchange="onModelPick()" style="display:none;margin-top:6px"></select>
    <label for="time">Uhrzeit fuer den taeglichen Report</label>
    <input type="time" name="report_schedule" id="time" value="{schedule}">
    <label for="promptSelect">LLM-Prompt-Vorlage waehlen</label>
