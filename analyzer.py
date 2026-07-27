@@ -60,11 +60,13 @@ def get_email_to():
     return appconfig.get("email_to") or ""
 
 
-# Standard-Prompt und -Betreff (GUI-editierbar via appconfig, Platzhalter im
+# Standard-Prompts und -Betreff (GUI-editierbar via appconfig, Platzhalter im
 # $name-Format via string.Template; safe_substitute ignoriert unbekannte
 # Platzhalter, damit ein individuell angepasstes Template nie einen Absturz
-# verursacht).
-DEFAULT_PROMPT_TEMPLATE = """Du bist ein Netzwerk-Sicherheitsexperte und analysierst UniFi-Netzwerk-Logs.
+# verursacht). Jeweils auf Deutsch und Englisch vorhanden, siehe
+# get_report_language()/PROMPT_PRESETS - die "STATUS: ..."-Zeile wird in
+# beiden Sprachen von parse_ampel() erkannt.
+DEFAULT_PROMPT_TEMPLATE_DE = """Du bist ein Netzwerk-Sicherheitsexperte und analysierst UniFi-Netzwerk-Logs.
 
 Analysiere die folgenden Log-Daten und erstelle einen strukturierten deutschen Bericht in GENAU
 diesem Format (Reihenfolge und Ueberschriften exakt so beibehalten):
@@ -94,7 +96,7 @@ ${log_text}
 
 Erstelle den Bericht auf Deutsch, exakt im obigen Format:"""
 
-PROMPT_TEMPLATE_KURZ = """Du bist ein Netzwerk-Sicherheitsexperte. Analysiere die folgenden UniFi-Netzwerk-Logs und
+PROMPT_TEMPLATE_KURZ_DE = """Du bist ein Netzwerk-Sicherheitsexperte. Analysiere die folgenden UniFi-Netzwerk-Logs und
 erstelle einen SEHR KURZEN Bericht auf Deutsch.
 
 Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
@@ -109,7 +111,7 @@ ${log_text}
 
 Kurzbericht auf Deutsch:"""
 
-PROMPT_TEMPLATE_TECHNISCH = """Du bist ein Senior-Netzwerk-Sicherheitsanalyst und erstellst einen technischen
+PROMPT_TEMPLATE_TECHNISCH_DE = """Du bist ein Senior-Netzwerk-Sicherheitsanalyst und erstellst einen technischen
 Detailbericht fuer IT-Administratoren auf Deutsch.
 
 Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
@@ -137,24 +139,130 @@ ${log_text}
 
 Erstelle den technischen Bericht auf Deutsch:"""
 
+DEFAULT_PROMPT_TEMPLATE_EN = """You are a network security expert analyzing UniFi network logs.
+
+Analyze the following log data and produce a structured report in EXACTLY this
+format (keep the order and headings exactly as shown):
+
+STATUS: <GREEN|YELLOW|RED>
+
+## Summary
+2-3 sentences overview of the last 24 hours - the most important points first.
+
+## Issues & Warnings
+Critical events, errors, unusual patterns.
+
+## Security
+Login attempts, port scans, suspicious IPs, connection drops.
+
+## Network Performance
+Connection quality, latency issues, device outages.
+
+## Recommendations
+Concrete actions based on the logs.
+
+Important: the very first line MUST be exactly "STATUS: GREEN", "STATUS: YELLOW", or "STATUS: RED"
+(GREEN = all normal, YELLOW = attention/monitor, RED = critical/act immediately).
+
+${threat_intel}${research}LOG DATA (last 24 hours):
+${log_text}
+
+Write the report in English, exactly in the format above:"""
+
+PROMPT_TEMPLATE_KURZ_EN = """You are a network security expert. Analyze the following UniFi network logs and
+write a VERY SHORT report in English.
+
+The very first line MUST be exactly "STATUS: GREEN", "STATUS: YELLOW", or "STATUS: RED"
+(GREEN = all normal, YELLOW = attention, RED = critical).
+
+Then, in at most 4-5 sentences of plain prose (no headings, no bullet points):
+what happened, are there any security issues, what should the user do (if
+anything at all). Only the essentials - no noise.
+
+${threat_intel}${research}LOG DATA (last 24 hours):
+${log_text}
+
+Short report in English:"""
+
+PROMPT_TEMPLATE_TECHNISCH_EN = """You are a senior network security analyst producing a technical detail report
+for IT administrators in English.
+
+The very first line MUST be exactly "STATUS: GREEN", "STATUS: YELLOW", or "STATUS: RED"
+(GREEN = all normal, YELLOW = attention/monitor, RED = critical/act immediately).
+
+Then produce a detailed report with the following sections (keep the headings
+exactly as shown):
+
+## Summary
+## Timeline of Notable Events
+List the most important events chronologically with timestamp, affected device/IP,
+and assessment.
+## Security Analysis
+Detailed analysis of all security-relevant entries: source, destination, port/protocol
+(where identifiable), attack patterns, affected IPs with reputation data.
+## Network Performance & Stability
+Connection drops, roaming issues, bandwidth anomalies, affected devices.
+## Technical Recommendations
+Concrete, prioritized actions (immediate vs. medium-term).
+## Open Questions / Uncertainties
+What isn't clear from the logs and should be checked manually.
+
+${threat_intel}${research}LOG DATA (last 24 hours):
+${log_text}
+
+Write the technical report in English:"""
+
 # Eingebaute Prompt-Vorlagen, in der GUI ueber ein Dropdown auswaehlbar (nicht
 # loeschbar/veraenderbar - eigene Vorlagen landen stattdessen in der Prompt-
-# Bibliothek, siehe get_prompt_library()).
+# Bibliothek, siehe get_prompt_library()). Nach Sprache gruppiert; welche
+# Sprache als Standard (unkonfiguriertes Template) verwendet wird, steuert
+# get_report_language()/report_language in der GUI.
 PROMPT_PRESETS = {
-    "standard":  {"label": "Standard (ausfuehrlich)", "template": DEFAULT_PROMPT_TEMPLATE},
-    "kurz":      {"label": "Kurzbericht", "template": PROMPT_TEMPLATE_KURZ},
-    "technisch": {"label": "Technisch / Detailliert", "template": PROMPT_TEMPLATE_TECHNISCH},
+    "de": {
+        "standard":  {"label": "Standard (ausfuehrlich)", "template": DEFAULT_PROMPT_TEMPLATE_DE},
+        "kurz":      {"label": "Kurzbericht", "template": PROMPT_TEMPLATE_KURZ_DE},
+        "technisch": {"label": "Technisch / Detailliert", "template": PROMPT_TEMPLATE_TECHNISCH_DE},
+    },
+    "en": {
+        "standard":  {"label": "Standard (detailed)", "template": DEFAULT_PROMPT_TEMPLATE_EN},
+        "kurz":      {"label": "Short report", "template": PROMPT_TEMPLATE_KURZ_EN},
+        "technisch": {"label": "Technical / Detailed", "template": PROMPT_TEMPLATE_TECHNISCH_EN},
+    },
 }
 
-DEFAULT_EMAIL_SUBJECT_TEMPLATE = "UniFi Netzwerk-Analyse - $date"
+_DEFAULT_EMAIL_SUBJECT = {
+    "de": "UniFi Netzwerk-Analyse - $date",
+    "en": "UniFi Network Analysis - $date",
+}
+
+# Feste Textbausteine rund um den Bericht (E-Mail-Kopfzeilen, Ampel-Label),
+# unabhaengig vom frei editierbaren Prompt-Text - siehe send_email_report().
+_EMAIL_CHROME = {
+    "de": {"title": "UniFi Netzwerk-Analyse", "date": "Datum", "model": "Modell",
+           "period": "Analysezeitraum", "last24h": "Letzte 24 Stunden", "status": "Status",
+           "unknown": "Unbekannt", "footer": "Automatisch generiert von UniFi-Analyzer"},
+    "en": {"title": "UniFi Network Analysis", "date": "Date", "model": "Model",
+           "period": "Analysis period", "last24h": "Last 24 hours", "status": "Status",
+           "unknown": "Unknown", "footer": "Automatically generated by UniFi-Analyzer"},
+}
+
+_AMPEL_LABELS = {
+    "de": {"gruen": ("Normal", "#2e7d32"), "gelb": ("Achtung", "#f9a825"), "rot": ("Kritisch", "#c62828")},
+    "en": {"gruen": ("Normal", "#2e7d32"), "gelb": ("Attention", "#f9a825"), "rot": ("Critical", "#c62828")},
+}
+
+
+def get_report_language():
+    lang = (appconfig.get("report_language") or "de").lower()
+    return lang if lang in ("de", "en") else "de"
 
 
 def get_prompt_template():
-    return appconfig.get("llm_prompt_template") or DEFAULT_PROMPT_TEMPLATE
+    return appconfig.get("llm_prompt_template") or PROMPT_PRESETS[get_report_language()]["standard"]["template"]
 
 
 def get_email_subject_template():
-    return appconfig.get("email_subject") or DEFAULT_EMAIL_SUBJECT_TEMPLATE
+    return appconfig.get("email_subject") or _DEFAULT_EMAIL_SUBJECT[get_report_language()]
 
 
 def get_prompt_library():
@@ -533,9 +641,14 @@ def analyze_with_llm(log_text, entries=None):
         return f"Fehler bei der KI-Analyse: {e}"
 
 
-# ── Ampel-Status parsen (STATUS: GRUEN/GELB/ROT am Berichtsanfang) ───────────
-_AMPEL_LABELS = {"gruen": ("Normal", "#2e7d32"), "gelb": ("Achtung", "#f9a825"),
-                 "rot": ("Kritisch", "#c62828")}
+# ── Ampel-Status parsen (STATUS: GRUEN/GELB/ROT oder GREEN/YELLOW/RED) ───────
+# Interne Schluessel bleiben immer "gruen"/"gelb"/"rot", unabhaengig davon, ob
+# der Prompt (und damit die LLM-Antwort) auf Deutsch oder Englisch war.
+_STATUS_WORD_TO_KEY = {
+    "gruen": "gruen", "green": "gruen",
+    "gelb": "gelb", "yellow": "gelb",
+    "rot": "rot", "red": "rot",
+}
 
 
 def parse_ampel(analysis):
@@ -543,10 +656,10 @@ def parse_ampel(analysis):
     Gibt (farbschluessel_oder_None, bericht_ohne_status_zeile) zurueck."""
     lines = (analysis or "").splitlines()
     if lines:
-        m = _re.match(r"^\s*STATUS:\s*(GRUEN|GELB|ROT)\s*$", lines[0], _re.IGNORECASE)
+        m = _re.match(r"^\s*STATUS:\s*(GRUEN|GELB|ROT|GREEN|YELLOW|RED)\s*$", lines[0], _re.IGNORECASE)
         if m:
             rest = "\n".join(lines[1:]).lstrip("\n")
-            return m.group(1).lower(), rest
+            return _STATUS_WORD_TO_KEY[m.group(1).lower()], rest
     return None, analysis
 
 
@@ -577,33 +690,45 @@ def send_email_report(analysis):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     subject = Template(get_email_subject_template()).safe_substitute(date=now)
 
+    lang = get_report_language()
+    chrome = _EMAIL_CHROME[lang]
     ampel, body = parse_ampel(analysis)
-    label, color = _AMPEL_LABELS.get(ampel, ("Unbekannt", "#757575"))
+    label, color = _AMPEL_LABELS[lang].get(ampel, (chrome["unknown"], "#757575"))
     html_analysis = _markdown_lite_to_html(body)
 
+    # prefers-color-scheme wird von Apple Mail/Outlook (iOS/Mac) und manchen
+    # Webmailern unterstuetzt (kein Standard bei allen Clients, Best-Effort).
     html_body = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
 <style>
-  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; }}
+  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; background: #fff; }}
   h2 {{ color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }}
   h3 {{ color: #1a73e8; margin-top: 22px; margin-bottom: 6px; }}
   .meta {{ background: #f5f5f5; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; }}
   .ampel {{ display: inline-block; padding: 8px 16px; border-radius: 6px; color: #fff; font-weight: bold; margin-bottom: 20px; background: {color}; }}
   .content {{ line-height: 1.7; }}
   .footer {{ margin-top: 30px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ background: #1b1b1f !important; color: #e6e6e6 !important; }}
+    h2, h3 {{ color: #6fa8dc !important; border-bottom-color: #6fa8dc !important; }}
+    .meta {{ background: #26262c !important; }}
+    .footer {{ color: #9a9aa5 !important; border-top-color: #3a3a44 !important; }}
+  }}
 </style>
 </head>
 <body>
-  <h2>🔍 UniFi Netzwerk-Analyse</h2>
+  <h2>{chrome["title"]}</h2>
   <div class="meta">
-    <b>Datum:</b> {now} &nbsp;|&nbsp;
-    <b>Modell:</b> {get_active_model()} &nbsp;|&nbsp;
-    <b>Analysezeitraum:</b> Letzte 24 Stunden
+    <b>{chrome["date"]}:</b> {now} &nbsp;|&nbsp;
+    <b>{chrome["model"]}:</b> {get_active_model()} &nbsp;|&nbsp;
+    <b>{chrome["period"]}:</b> {chrome["last24h"]}
   </div>
-  <div class="ampel">Status: {label}</div>
+  <div class="ampel">{chrome["status"]}: {label}</div>
   <div class="content">{html_analysis}</div>
-  <div class="footer">Automatisch generiert von UniFi-Analyzer</div>
+  <div class="footer">{chrome["footer"]}</div>
 </body>
 </html>"""
 
@@ -716,10 +841,17 @@ def get_settings_snapshot():
         "llm_base_url": cfg.get("llm_base_url"),
         "abuseipdb_key": cfg.get("abuseipdb_key"),
         "searxng_url": cfg.get("searxng_url"),
+        "report_language": get_report_language(),
         "llm_prompt_template": cfg.get("llm_prompt_template"),
-        "llm_prompt_template_default": DEFAULT_PROMPT_TEMPLATE,
-        "llm_prompt_presets": {k: v["template"] for k, v in PROMPT_PRESETS.items()},
-        "llm_prompt_preset_labels": {k: v["label"] for k, v in PROMPT_PRESETS.items()},
+        "llm_prompt_template_default": PROMPT_PRESETS[get_report_language()]["standard"]["template"],
+        "llm_prompt_presets": {
+            f"{lang}:{k}": v["template"]
+            for lang, presets in PROMPT_PRESETS.items() for k, v in presets.items()
+        },
+        "llm_prompt_preset_labels": {
+            f"{lang}:{k}": v["label"]
+            for lang, presets in PROMPT_PRESETS.items() for k, v in presets.items()
+        },
         "llm_prompt_library": get_prompt_library(),
         "smtp_host": cfg.get("smtp_host"),
         "smtp_port": cfg.get("smtp_port"),

@@ -213,10 +213,16 @@ PAGE = """<!DOCTYPE html>
    <datalist id="model_list">{model_options}</datalist>
    <label for="time">Uhrzeit fuer den taeglichen Report</label>
    <input type="time" name="report_schedule" id="time" value="{schedule}">
+   <label for="replang">Berichtssprache (E-Mail-Text, Status-Woerter, Standard-Prompt)</label>
+   <select name="report_language" id="replang">
+    <option value="de" {lang_de_sel}>Deutsch</option>
+    <option value="en" {lang_en_sel}>English</option>
+   </select>
    <label for="promptSelect">LLM-Prompt-Vorlage waehlen</label>
    <select id="promptSelect" onchange="onPromptSelect()">
     <option value="">-- eigener Text (unten) --</option>
-    <optgroup label="Eingebaut">{preset_options}</optgroup>
+    <optgroup label="Eingebaut (Deutsch)">{preset_options_de}</optgroup>
+    <optgroup label="Eingebaut (English)">{preset_options_en}</optgroup>
     <optgroup label="Eigene Vorlagen">{custom_prompt_options}</optgroup>
    </select>
    <button type="button" class="btn-secondary" onclick="addPromptToLibrary()">Hinzufuegen</button>
@@ -321,6 +327,7 @@ PAGE = """<!DOCTYPE html>
 
 _SETTINGS_DEFAULTS = {
     "schedule": "-", "email": "-", "model": "-", "abuseipdb": False,
+    "report_language": "de",
     "log_source": "graylog",
     "graylog_host": "graylog", "graylog_port": "9000",
     "graylog_user": "admin", "graylog_password": "",
@@ -398,15 +405,20 @@ def make_handler(cfg):
             custom_templates = st.get("llm_prompt_library") or {}
             preset_templates_json = json.dumps(preset_templates).replace("</", "<\\/")
             custom_templates_json = json.dumps(custom_templates).replace("</", "<\\/")
-            preset_options = "".join(
-                '<option value="preset:{0}">{1}</option>'.format(html.escape(k), html.escape(preset_labels.get(k, k)))
-                for k in preset_templates
-            )
+            def _preset_opts(prefix):
+                return "".join(
+                    '<option value="preset:{0}">{1}</option>'.format(html.escape(k), html.escape(preset_labels.get(k, k)))
+                    for k in sorted(preset_templates)
+                    if k.startswith(prefix)
+                )
+            preset_options_de = _preset_opts("de:")
+            preset_options_en = _preset_opts("en:")
             custom_prompt_options = "".join(
                 '<option value="custom:{0}">{0}</option>'.format(html.escape(name))
                 for name in sorted(custom_templates.keys())
             ) or '<option value="" disabled>(keine)</option>'
             status_json = json.dumps(status).replace("</", "<\\/")
+            report_language = st.get("report_language") or "de"
 
             return PAGE.format(
                 flash=flash_html,
@@ -444,7 +456,10 @@ def make_handler(cfg):
                 default_prompt_json=default_prompt_json,
                 preset_templates_json=preset_templates_json,
                 custom_templates_json=custom_templates_json,
-                preset_options=preset_options,
+                preset_options_de=preset_options_de,
+                preset_options_en=preset_options_en,
+                lang_de_sel=("selected" if report_language == "de" else ""),
+                lang_en_sel=("selected" if report_language == "en" else ""),
                 custom_prompt_options=custom_prompt_options,
                 status_json=status_json,
                 email_subject=esc("email_subject"),
@@ -515,6 +530,8 @@ def make_handler(cfg):
                         updates["ollama_model"] = form["ollama_model"].strip()
                     if form.get("report_schedule"):
                         updates["report_schedule"] = form["report_schedule"]
+                    if form.get("report_language") in ("de", "en"):
+                        updates["report_language"] = form["report_language"]
                     if "llm_prompt_template" in form:
                         updates["llm_prompt_template"] = form["llm_prompt_template"].strip()
                 elif form_id == "logsource":

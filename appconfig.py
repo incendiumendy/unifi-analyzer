@@ -9,7 +9,7 @@ SETTINGS_PATH = os.getenv("SETTINGS_PATH", "/data/settings.json")
 _lock = threading.Lock()
 
 # Schluessel, die ueber die GUI editierbar sind
-_EDITABLE = ("ollama_model", "report_schedule", "llm_base_url", "abuseipdb_key",
+_EDITABLE = ("ollama_model", "report_schedule", "report_language", "llm_base_url", "abuseipdb_key",
              "searxng_url", "llm_prompt_template", "llm_prompt_library",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
@@ -24,6 +24,7 @@ _EDITABLE = ("ollama_model", "report_schedule", "llm_base_url", "abuseipdb_key",
 _DEFAULTS = {
     "ollama_model": os.getenv("OLLAMA_MODEL", "gemma4:12b"),
     "report_schedule": os.getenv("REPORT_SCHEDULE", "08:00"),
+    "report_language": os.getenv("REPORT_LANGUAGE", "de"),
     "llm_base_url": os.getenv("LLM_BASE_URL", os.getenv("LM_STUDIO_BASE_URL", "http://lm-studio:1234/v1")),
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
     "searxng_url": os.getenv("SEARXNG_URL", ""),
