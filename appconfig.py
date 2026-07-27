@@ -14,7 +14,7 @@ _EDITABLE = ("ollama_model", "report_schedule", "report_language", "llm_base_url
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
              "smtp_host", "smtp_port", "smtp_user", "smtp_password",
-             "smtp_security", "smtp_from", "email_to", "email_subject",
+             "smtp_security", "smtp_from", "email_to", "email_subject", "email_theme",
              "unifi_block_enabled", "unifi_dry_run", "unifi_host",
              "unifi_api_key", "unifi_block_threshold", "unifi_allowlist")
 
@@ -43,6 +43,7 @@ _DEFAULTS = {
     "smtp_from": os.getenv("SMTP_FROM", ""),
     "email_to": os.getenv("EMAIL_TO", ""),
     "email_subject": os.getenv("EMAIL_SUBJECT", ""),
+    "email_theme": os.getenv("EMAIL_THEME", "auto"),
     "unifi_block_enabled": os.getenv("UNIFI_BLOCK_ENABLED", "") in ("1", "true", "True", "on"),
     "unifi_dry_run": os.getenv("UNIFI_DRY_RUN", "1") in ("1", "true", "True", "on"),
     "unifi_host": os.getenv("UNIFI_HOST", "https://192.168.1.1"),

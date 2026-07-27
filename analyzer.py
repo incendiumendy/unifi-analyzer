@@ -251,6 +251,38 @@ _AMPEL_LABELS = {
     "en": {"gruen": ("Normal", "#2e7d32"), "gelb": ("Attention", "#f9a825"), "rot": ("Critical", "#c62828")},
 }
 
+# E-Mail-Farbschemata. "auto" folgt der Systemeinstellung des Mail-Clients
+# (prefers-color-scheme, nicht von allen Clients unterstuetzt); "light"/"dark"
+# erzwingen ein festes Schema unabhaengig vom Client.
+_EMAIL_PALETTES = {
+    "light": {"bg": "#ffffff", "text": "#333333", "accent": "#1a73e8",
+              "meta_bg": "#f5f5f5", "footer_text": "#888888", "footer_border": "#dddddd"},
+    "dark": {"bg": "#2a2d35", "text": "#d7dbe0", "accent": "#7fb0e6",
+             "meta_bg": "#34383f", "footer_text": "#9aa1a8", "footer_border": "#454952"},
+}
+
+_PALETTE_CSS_TEMPLATE = Template("""
+  body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: $text; background: $bg; }
+  h2 { color: $accent; border-bottom: 2px solid $accent; padding-bottom: 8px; }
+  h3 { color: $accent; margin-top: 22px; margin-bottom: 6px; }
+  .meta { background: $meta_bg; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; }
+  .footer { margin-top: 30px; font-size: 12px; color: $footer_text; border-top: 1px solid $footer_border; padding-top: 10px; }
+""")
+
+_DARK_MEDIA_TEMPLATE = Template("""
+  @media (prefers-color-scheme: dark) {
+    body { background: $bg !important; color: $text !important; }
+    h2, h3 { color: $accent !important; border-bottom-color: $accent !important; }
+    .meta { background: $meta_bg !important; }
+    .footer { color: $footer_text !important; border-top-color: $footer_border !important; }
+  }
+""")
+
+
+def get_email_theme():
+    theme = (appconfig.get("email_theme") or "auto").lower()
+    return theme if theme in ("auto", "light", "dark") else "auto"
+
 
 def get_report_language():
     lang = (appconfig.get("report_language") or "de").lower()
@@ -696,27 +728,29 @@ def send_email_report(analysis):
     label, color = _AMPEL_LABELS[lang].get(ampel, (chrome["unknown"], "#757575"))
     html_analysis = _markdown_lite_to_html(body)
 
-    # prefers-color-scheme wird von Apple Mail/Outlook (iOS/Mac) und manchen
-    # Webmailern unterstuetzt (kein Standard bei allen Clients, Best-Effort).
+    # E-Mail-Design: "auto" folgt der Systemeinstellung des Mail-Clients (Best-
+    # Effort, nicht von allen Clients unterstuetzt), "light"/"dark" erzwingen
+    # ein festes Schema unabhaengig vom Client.
+    theme = get_email_theme()
+    base_palette = _EMAIL_PALETTES["dark"] if theme == "dark" else _EMAIL_PALETTES["light"]
+    base_css = _PALETTE_CSS_TEMPLATE.safe_substitute(**base_palette)
+    if theme == "auto":
+        extra_css = _DARK_MEDIA_TEMPLATE.safe_substitute(**_EMAIL_PALETTES["dark"])
+        color_scheme = "light dark"
+    else:
+        extra_css = ""
+        color_scheme = theme
+
     html_body = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8">
-<meta name="color-scheme" content="light dark">
-<meta name="supported-color-schemes" content="light dark">
+<meta name="color-scheme" content="{color_scheme}">
+<meta name="supported-color-schemes" content="{color_scheme}">
 <style>
-  body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; background: #fff; }}
-  h2 {{ color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }}
-  h3 {{ color: #1a73e8; margin-top: 22px; margin-bottom: 6px; }}
-  .meta {{ background: #f5f5f5; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; }}
+{base_css}
   .ampel {{ display: inline-block; padding: 8px 16px; border-radius: 6px; color: #fff; font-weight: bold; margin-bottom: 20px; background: {color}; }}
   .content {{ line-height: 1.7; }}
-  .footer {{ margin-top: 30px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }}
-  @media (prefers-color-scheme: dark) {{
-    body {{ background: #1b1b1f !important; color: #e6e6e6 !important; }}
-    h2, h3 {{ color: #6fa8dc !important; border-bottom-color: #6fa8dc !important; }}
-    .meta {{ background: #26262c !important; }}
-    .footer {{ color: #9a9aa5 !important; border-top-color: #3a3a44 !important; }}
-  }}
+{extra_css}
 </style>
 </head>
 <body>
@@ -861,6 +895,7 @@ def get_settings_snapshot():
         "smtp_from": cfg.get("smtp_from"),
         "email_to": cfg.get("email_to"),
         "email_subject": cfg.get("email_subject"),
+        "email_theme": cfg.get("email_theme"),
         "unifi_block_enabled": cfg.get("unifi_block_enabled"),
         "unifi_dry_run": cfg.get("unifi_dry_run"),
         "unifi_host": cfg.get("unifi_host"),

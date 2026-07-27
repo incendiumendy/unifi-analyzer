@@ -276,6 +276,12 @@ PAGE = """<!DOCTYPE html>
    <input type="email" name="email_to" id="sto" value="{email_to}">
    <label for="ssubj">Betreff-Vorlage (Platzhalter: $date)</label>
    <input type="text" name="email_subject" id="ssubj" value="{email_subject}" placeholder="UniFi Netzwerk-Analyse - $date">
+   <label for="etheme">E-Mail-Design</label>
+   <select name="email_theme" id="etheme">
+    <option value="auto" {theme_auto_sel}>Automatisch (folgt dem Mail-Programm)</option>
+    <option value="light" {theme_light_sel}>Hell</option>
+    <option value="dark" {theme_dark_sel}>Dunkel</option>
+   </select>
    <br><button type="submit">&#128190; Speichern</button>
   </form>
   <div class="muted">Eigenstaendige SMTP-Konfiguration, unabhaengig von anderen Systemen.</div>
@@ -335,7 +341,7 @@ _SETTINGS_DEFAULTS = {
     "llm_prompt_template": "", "llm_prompt_template_default": "",
     "llm_prompt_presets": {}, "llm_prompt_preset_labels": {}, "llm_prompt_library": {},
     "smtp_host": "", "smtp_port": 465, "smtp_user": "", "smtp_password": "",
-    "smtp_security": "ssl", "smtp_from": "", "email_to": "", "email_subject": "",
+    "smtp_security": "ssl", "smtp_from": "", "email_to": "", "email_subject": "", "email_theme": "auto",
     "unifi_block_enabled": False, "unifi_dry_run": True, "unifi_host": "",
     "unifi_api_key": "", "unifi_block_threshold": 95, "unifi_allowlist": "",
 }
@@ -463,6 +469,9 @@ def make_handler(cfg):
                 custom_prompt_options=custom_prompt_options,
                 status_json=status_json,
                 email_subject=esc("email_subject"),
+                theme_auto_sel=("selected" if (st.get("email_theme") or "auto") == "auto" else ""),
+                theme_light_sel=("selected" if st.get("email_theme") == "light" else ""),
+                theme_dark_sel=("selected" if st.get("email_theme") == "dark" else ""),
                 ub_enabled=("checked" if st.get("unifi_block_enabled") else ""),
                 ub_dry=("checked" if st.get("unifi_dry_run") else ""),
                 ub_host=html.escape(str(st.get("unifi_host", "") or "")),
@@ -565,6 +574,8 @@ def make_handler(cfg):
                         updates["email_to"] = form["email_to"].strip()
                     if "email_subject" in form:
                         updates["email_subject"] = form["email_subject"].strip()
+                    if form.get("email_theme") in ("auto", "light", "dark"):
+                        updates["email_theme"] = form["email_theme"]
                 elif form_id == "abuseipdb":
                     if "abuseipdb_key" in form:
                         updates["abuseipdb_key"] = form["abuseipdb_key"].strip()
