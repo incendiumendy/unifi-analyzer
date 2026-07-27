@@ -15,6 +15,7 @@ import schedule
 import webui
 import appconfig
 import unifi_block
+from string import Template
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -56,6 +57,51 @@ def get_searxng_url():
 
 def get_email_to():
     return appconfig.get("email_to") or ""
+
+
+# Standard-Prompt und -Betreff (GUI-editierbar via appconfig, Platzhalter im
+# $name-Format via string.Template; safe_substitute ignoriert unbekannte
+# Platzhalter, damit ein individuell angepasstes Template nie einen Absturz
+# verursacht).
+DEFAULT_PROMPT_TEMPLATE = """Du bist ein Netzwerk-Sicherheitsexperte und analysierst UniFi-Netzwerk-Logs.
+
+Analysiere die folgenden Log-Daten und erstelle einen strukturierten deutschen Bericht in GENAU
+diesem Format (Reihenfolge und Ueberschriften exakt so beibehalten):
+
+STATUS: <GRUEN|GELB|ROT>
+
+## Kurzfassung
+2-3 Saetze Gesamtueberblick ueber die letzten 24 Stunden - das Wichtigste zuerst.
+
+## Auffaelligkeiten & Warnungen
+Kritische Ereignisse, Fehler, ungewoehnliche Muster.
+
+## Sicherheitsrelevantes
+Login-Versuche, Port-Scans, verdaechtige IPs, Verbindungsabbrueche.
+
+## Netzwerkleistung
+Verbindungsqualitaet, Latenz-Probleme, Geraeteausfaelle.
+
+## Empfehlungen
+Konkrete Massnahmen basierend auf den Logs.
+
+Wichtig: Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
+(GRUEN = alles normal, GELB = Achtung/Beobachten, ROT = kritisch/sofort handeln).
+
+${threat_intel}${research}LOG-DATEN (letzte 24 Stunden):
+${log_text}
+
+Erstelle den Bericht auf Deutsch, exakt im obigen Format:"""
+
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "UniFi Netzwerk-Analyse - $date"
+
+
+def get_prompt_template():
+    return appconfig.get("llm_prompt_template") or DEFAULT_PROMPT_TEMPLATE
+
+
+def get_email_subject_template():
+    return appconfig.get("email_subject") or DEFAULT_EMAIL_SUBJECT_TEMPLATE
 
 
 # ── SMTP-Konfiguration (rein GUI-basiert, kein Drittsystem noetig) ───────────
@@ -351,35 +397,9 @@ def analyze_with_llm(log_text, entries=None):
     threat_intel = build_threat_intel(log_text)
     research = research_errors(entries or [])
 
-    prompt = f"""Du bist ein Netzwerk-Sicherheitsexperte und analysierst UniFi-Netzwerk-Logs.
-
-Analysiere die folgenden Log-Daten und erstelle einen strukturierten deutschen Bericht in GENAU
-diesem Format (Reihenfolge und Ueberschriften exakt so beibehalten):
-
-STATUS: <GRUEN|GELB|ROT>
-
-## Kurzfassung
-2-3 Saetze Gesamtueberblick ueber die letzten 24 Stunden - das Wichtigste zuerst.
-
-## Auffaelligkeiten & Warnungen
-Kritische Ereignisse, Fehler, ungewoehnliche Muster.
-
-## Sicherheitsrelevantes
-Login-Versuche, Port-Scans, verdaechtige IPs, Verbindungsabbrueche.
-
-## Netzwerkleistung
-Verbindungsqualitaet, Latenz-Probleme, Geraeteausfaelle.
-
-## Empfehlungen
-Konkrete Massnahmen basierend auf den Logs.
-
-Wichtig: Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
-(GRUEN = alles normal, GELB = Achtung/Beobachten, ROT = kritisch/sofort handeln).
-
-{threat_intel}{research}LOG-DATEN (letzte 24 Stunden):
-{log_text[:8000]}
-
-Erstelle den Bericht auf Deutsch, exakt im obigen Format:"""
+    prompt = Template(get_prompt_template()).safe_substitute(
+        threat_intel=threat_intel, research=research, log_text=log_text[:8000]
+    )
 
     try:
         resp = requests.post(
@@ -446,7 +466,7 @@ def send_email_report(analysis):
         return False
 
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
-    subject = f"UniFi Netzwerk-Analyse – {now}"
+    subject = Template(get_email_subject_template()).safe_substitute(date=now)
 
     ampel, body = parse_ampel(analysis)
     label, color = _AMPEL_LABELS.get(ampel, ("Unbekannt", "#757575"))
@@ -587,6 +607,8 @@ def get_settings_snapshot():
         "llm_base_url": cfg.get("llm_base_url"),
         "abuseipdb_key": cfg.get("abuseipdb_key"),
         "searxng_url": cfg.get("searxng_url"),
+        "llm_prompt_template": cfg.get("llm_prompt_template"),
+        "llm_prompt_template_default": DEFAULT_PROMPT_TEMPLATE,
         "smtp_host": cfg.get("smtp_host"),
         "smtp_port": cfg.get("smtp_port"),
         "smtp_user": cfg.get("smtp_user"),
@@ -594,6 +616,7 @@ def get_settings_snapshot():
         "smtp_security": cfg.get("smtp_security"),
         "smtp_from": cfg.get("smtp_from"),
         "email_to": cfg.get("email_to"),
+        "email_subject": cfg.get("email_subject"),
         "unifi_block_enabled": cfg.get("unifi_block_enabled"),
         "unifi_dry_run": cfg.get("unifi_dry_run"),
         "unifi_host": cfg.get("unifi_host"),

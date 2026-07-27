@@ -91,6 +91,8 @@ PAGE = """<!DOCTYPE html>
  .ok{{color:#3ecf6b}} .warn{{color:#f0a431}} .err{{color:#ef5350}}
  label{{display:block;color:#9a9aa5;font-size:13px;margin:10px 0 4px}}
  select,input[type=time],input[type=text],input[type=password],input[type=number],input[type=email]{{width:100%;max-width:340px;background:#1b1b1f;color:#fff;border:1px solid #3a3a44;border-radius:7px;padding:9px 10px;font-size:14px;box-sizing:border-box}}
+ textarea{{width:100%;max-width:640px;background:#1b1b1f;color:#fff;border:1px solid #3a3a44;border-radius:7px;padding:9px 10px;font-size:13px;line-height:1.4;box-sizing:border-box;font-family:Consolas,monospace}}
+ .btn-secondary{{background:#4a4a54;margin-left:10px}} .btn-secondary:hover{{background:#3a3a44}}
  .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;max-width:700px}}
  .grid2 label,.grid2 select,.grid2 input{{max-width:100%}}
  button{{background:#2b8aef;color:#fff;border:none;padding:11px 22px;border-radius:8px;font-size:15px;cursor:pointer;margin-top:14px}}
@@ -117,6 +119,7 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>KI-Modell &amp; Zeitplan</h2>
+  <script>const DEFAULT_PROMPT_TEMPLATE = {default_prompt_json};</script>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="model">
    <label for="llmurl">LLM-Endpoint (OpenAI-kompatibel, z.B. LM Studio/Ollama/OpenAI)</label>
@@ -126,9 +129,12 @@ PAGE = """<!DOCTYPE html>
    <datalist id="model_list">{model_options}</datalist>
    <label for="time">Uhrzeit fuer den taeglichen Report</label>
    <input type="time" name="report_schedule" id="time" value="{schedule}">
+   <label for="prompt">LLM-Prompt-Vorlage (Platzhalter: $threat_intel, $research, $log_text)</label>
+   <textarea name="llm_prompt_template" id="prompt" rows="12">{llm_prompt_template}</textarea>
    <br><button type="submit">&#128190; Speichern</button>
+   <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE">Standard wiederherstellen</button>
   </form>
-  <div class="muted">Aenderungen werden persistent gespeichert und sofort wirksam (kein Neustart noetig).</div>
+  <div class="muted">Aenderungen werden persistent gespeichert und sofort wirksam (kein Neustart noetig). Prompt-Vorlage leer lassen fuer die eingebaute Standard-Vorlage.</div>
  </div>
  <div class="card">
   <h2>Log-Quelle</h2>
@@ -169,6 +175,8 @@ PAGE = """<!DOCTYPE html>
    <input type="email" name="smtp_from" id="sfrom" value="{smtp_from}">
    <label for="sto">Empfaenger (Report-Adresse)</label>
    <input type="email" name="email_to" id="sto" value="{email_to}">
+   <label for="ssubj">Betreff-Vorlage (Platzhalter: $date)</label>
+   <input type="text" name="email_subject" id="ssubj" value="{email_subject}" placeholder="UniFi Netzwerk-Analyse - $date">
    <br><button type="submit">&#128190; Speichern</button>
   </form>
   <div class="muted">Eigenstaendige SMTP-Konfiguration, unabhaengig von anderen Systemen.</div>
@@ -224,8 +232,9 @@ _SETTINGS_DEFAULTS = {
     "graylog_host": "graylog", "graylog_port": "9000",
     "graylog_user": "admin", "graylog_password": "",
     "llm_base_url": "", "abuseipdb_key": "", "searxng_url": "",
+    "llm_prompt_template": "", "llm_prompt_template_default": "",
     "smtp_host": "", "smtp_port": 465, "smtp_user": "", "smtp_password": "",
-    "smtp_security": "ssl", "smtp_from": "", "email_to": "",
+    "smtp_security": "ssl", "smtp_from": "", "email_to": "", "email_subject": "",
     "unifi_block_enabled": False, "unifi_dry_run": True, "unifi_host": "",
     "unifi_api_key": "", "unifi_block_threshold": 95, "unifi_allowlist": "",
 }
@@ -289,6 +298,8 @@ def make_handler(cfg):
             def esc(key, default=""):
                 return html.escape(str(st.get(key, default) or default))
 
+            default_prompt_json = json.dumps(st.get("llm_prompt_template_default") or "").replace("</", "<\\/")
+
             return PAGE.format(
                 flash=flash_html,
                 status=html.escape(status), statusclass=sc,
@@ -321,6 +332,9 @@ def make_handler(cfg):
                 email_to=esc("email_to"),
                 abuseipdb_key=esc("abuseipdb_key"),
                 searxng_url=esc("searxng_url"),
+                llm_prompt_template=esc("llm_prompt_template"),
+                default_prompt_json=default_prompt_json,
+                email_subject=esc("email_subject"),
                 ub_enabled=("checked" if st.get("unifi_block_enabled") else ""),
                 ub_dry=("checked" if st.get("unifi_dry_run") else ""),
                 ub_host=html.escape(str(st.get("unifi_host", "") or "")),
@@ -375,6 +389,8 @@ def make_handler(cfg):
                         updates["ollama_model"] = form["ollama_model"].strip()
                     if form.get("report_schedule"):
                         updates["report_schedule"] = form["report_schedule"]
+                    if "llm_prompt_template" in form:
+                        updates["llm_prompt_template"] = form["llm_prompt_template"].strip()
                 elif form_id == "logsource":
                     if form.get("log_source") in ("graylog", "unifi_direct"):
                         updates["log_source"] = form["log_source"]
@@ -404,6 +420,8 @@ def make_handler(cfg):
                         updates["smtp_from"] = form["smtp_from"].strip()
                     if "email_to" in form:
                         updates["email_to"] = form["email_to"].strip()
+                    if "email_subject" in form:
+                        updates["email_subject"] = form["email_subject"].strip()
                 elif form_id == "abuseipdb":
                     if "abuseipdb_key" in form:
                         updates["abuseipdb_key"] = form["abuseipdb_key"].strip()

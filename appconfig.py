@@ -10,11 +10,11 @@ _lock = threading.Lock()
 
 # Schluessel, die ueber die GUI editierbar sind
 _EDITABLE = ("ollama_model", "report_schedule", "llm_base_url", "abuseipdb_key",
-             "searxng_url",
+             "searxng_url", "llm_prompt_template",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
              "smtp_host", "smtp_port", "smtp_user", "smtp_password",
-             "smtp_security", "smtp_from", "email_to",
+             "smtp_security", "smtp_from", "email_to", "email_subject",
              "unifi_block_enabled", "unifi_dry_run", "unifi_host",
              "unifi_api_key", "unifi_block_threshold", "unifi_allowlist")
 
@@ -27,6 +27,7 @@ _DEFAULTS = {
     "llm_base_url": os.getenv("LLM_BASE_URL", os.getenv("LM_STUDIO_BASE_URL", "http://lm-studio:1234/v1")),
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
     "searxng_url": os.getenv("SEARXNG_URL", ""),
+    "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", ""),
     "log_source": os.getenv("LOG_SOURCE", "graylog"),
     "graylog_host": os.getenv("GRAYLOG_HOST", "graylog"),
     "graylog_port": os.getenv("GRAYLOG_PORT", "9000"),
@@ -39,6 +40,7 @@ _DEFAULTS = {
     "smtp_security": os.getenv("SMTP_SECURITY", "ssl"),
     "smtp_from": os.getenv("SMTP_FROM", ""),
     "email_to": os.getenv("EMAIL_TO", ""),
+    "email_subject": os.getenv("EMAIL_SUBJECT", ""),
     "unifi_block_enabled": os.getenv("UNIFI_BLOCK_ENABLED", "") in ("1", "true", "True", "on"),
     "unifi_dry_run": os.getenv("UNIFI_DRY_RUN", "1") in ("1", "true", "True", "on"),
     "unifi_host": os.getenv("UNIFI_HOST", "https://192.168.1.1"),
