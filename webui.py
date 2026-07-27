@@ -10,8 +10,12 @@ STATE = {
     "last_run": None,
     "last_status": "noch nicht ausgefuehrt",
     "last_report": "",
+    "last_ampel": None,
     "running": False,
 }
+
+_AMPEL_LABELS = {"gruen": ("Normal", "ok"), "gelb": ("Achtung", "warn"),
+                 "rot": ("Kritisch", "err")}
 
 _run_callback = None
 _get_settings = None
@@ -38,11 +42,12 @@ def record_start():
         STATE["last_status"] = "Analyse laeuft..."
 
 
-def record_result(report, status="OK"):
+def record_result(report, status="OK", ampel=None):
     with _lock:
         STATE["running"] = False
         STATE["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         STATE["last_status"] = status
+        STATE["last_ampel"] = ampel
         if report:
             STATE["last_report"] = report
 
@@ -169,14 +174,16 @@ PAGE = """<!DOCTYPE html>
   <div class="muted">Eigenstaendige SMTP-Konfiguration, unabhaengig von anderen Systemen.</div>
  </div>
  <div class="card">
-  <h2>Bedrohungserkennung (AbuseIPDB)</h2>
+  <h2>Bedrohungserkennung &amp; Recherche</h2>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="abuseipdb">
    <label for="aik">AbuseIPDB API-Key</label>
    <input type="password" name="abuseipdb_key" id="aik" value="{abuseipdb_key}" autocomplete="new-password">
+   <label for="sxng">SearXNG-URL (optional, fuer Online-Recherche zu Fehlermeldungen)</label>
+   <input type="text" name="searxng_url" id="sxng" value="{searxng_url}" placeholder="http://searxng-host:8080">
    <br><button type="submit">&#128190; Speichern</button>
   </form>
-  <div class="muted">Optional. Ohne Key wird die externe IP-Reputationspruefung uebersprungen.</div>
+  <div class="muted">AbuseIPDB optional (ohne Key wird die IP-Reputationspruefung uebersprungen). SearXNG optional (ohne URL wird zu Fehlern/Warnungen nicht online recherchiert). Eigene SearXNG-Instanz noetig, JSON-Format muss dort aktiviert sein.</div>
  </div>
  <div class="card">
   <h2>UniFi-Gateway IP-Sperrung</h2>
@@ -205,6 +212,7 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>Letzter Report</h2>
+  {ampel_badge}
   <pre>{report}</pre>
  </div>
 </div></body></html>"""
@@ -215,7 +223,7 @@ _SETTINGS_DEFAULTS = {
     "log_source": "graylog",
     "graylog_host": "graylog", "graylog_port": "9000",
     "graylog_user": "admin", "graylog_password": "",
-    "llm_base_url": "", "abuseipdb_key": "",
+    "llm_base_url": "", "abuseipdb_key": "", "searxng_url": "",
     "smtp_host": "", "smtp_port": 465, "smtp_user": "", "smtp_password": "",
     "smtp_security": "ssl", "smtp_from": "", "email_to": "",
     "unifi_block_enabled": False, "unifi_dry_run": True, "unifi_host": "",
@@ -271,6 +279,13 @@ def make_handler(cfg):
             security = st.get("smtp_security") or "ssl"
             flash_html = '<div class="flash">{}</div>'.format(html.escape(flash)) if flash else ""
 
+            ampel = STATE.get("last_ampel")
+            if ampel in _AMPEL_LABELS:
+                label, cls = _AMPEL_LABELS[ampel]
+                ampel_badge = '<div class="row"><span class="k">Ampel</span><span class="v {0}">{1}</span></div>'.format(cls, label)
+            else:
+                ampel_badge = ""
+
             def esc(key, default=""):
                 return html.escape(str(st.get(key, default) or default))
 
@@ -285,6 +300,7 @@ def make_handler(cfg):
                 abuseclass=("ok" if abuse_active else "warn"),
                 model_options=opts,
                 report=html.escape(report),
+                ampel_badge=ampel_badge,
                 disabled=("disabled" if STATE["running"] else ""),
                 log_source_label=("UniFi direkt" if log_source == "unifi_direct" else "Graylog"),
                 llm_base_url=esc("llm_base_url"),
@@ -304,6 +320,7 @@ def make_handler(cfg):
                 smtp_from=esc("smtp_from"),
                 email_to=esc("email_to"),
                 abuseipdb_key=esc("abuseipdb_key"),
+                searxng_url=esc("searxng_url"),
                 ub_enabled=("checked" if st.get("unifi_block_enabled") else ""),
                 ub_dry=("checked" if st.get("unifi_dry_run") else ""),
                 ub_host=html.escape(str(st.get("unifi_host", "") or "")),
@@ -390,6 +407,8 @@ def make_handler(cfg):
                 elif form_id == "abuseipdb":
                     if "abuseipdb_key" in form:
                         updates["abuseipdb_key"] = form["abuseipdb_key"].strip()
+                    if "searxng_url" in form:
+                        updates["searxng_url"] = form["searxng_url"].strip()
                 elif form_id == "unifiblock":
                     # Checkboxen: vorhanden => an, fehlt => aus (nur bei diesem Formular)
                     updates["unifi_block_enabled"] = bool(form.get("unifi_block_enabled"))

@@ -50,6 +50,10 @@ def get_abuseipdb_key():
     return appconfig.get("abuseipdb_key") or ""
 
 
+def get_searxng_url():
+    return (appconfig.get("searxng_url") or "").rstrip("/")
+
+
 def get_email_to():
     return appconfig.get("email_to") or ""
 
@@ -279,28 +283,103 @@ def build_threat_intel(log_text):
     intel += _run_unifi_block(_block_candidates)
     return intel
 
-def analyze_with_llm(log_text):
+
+# -- Online-Recherche zu auffaelligen Fehlermeldungen (SearXNG) ---------------
+def web_research(query, max_results=3):
+    """Fragt eine SearXNG-Instanz ab (muss JSON-Format aktiviert haben,
+    siehe SearXNG settings.yml: search.formats: [html, json]).
+    Gibt eine kompakte Textzusammenfassung der Top-Treffer zurueck oder ""
+    wenn keine SearXNG-URL konfiguriert ist oder die Abfrage fehlschlaegt."""
+    base = get_searxng_url()
+    if not base:
+        return ""
+    try:
+        r = requests.get(
+            f"{base}/search",
+            params={"q": query, "format": "json"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        results = r.json().get("results", [])[:max_results]
+        if not results:
+            return ""
+        lines = [f"Suche: \"{query}\""]
+        for res in results:
+            title = (res.get("title") or "").strip()
+            content = (res.get("content") or "").strip()
+            lines.append(f"  - {title}: {content[:200]}")
+        return "\n".join(lines)
+    except Exception as e:
+        log.warning(f"SearXNG-Recherche fehlgeschlagen ({query}): {e}")
+        return ""
+
+
+def research_errors(entries, max_queries=3):
+    """Recherchiert online zu den auffaelligsten Fehler-/Warn-Log-Zeilen
+    (nur wenn searxng_url konfiguriert ist). Dedupliziert aehnliche
+    Meldungen grob ueber die ersten Worte, um nicht dieselbe Meldung
+    mehrfach nachzuschlagen."""
+    if not get_searxng_url():
+        return ""
+    interesting_levels = ("error", "err", "warn", "warning", "alarm", "crit", "critical")
+    seen_prefixes = set()
+    findings = []
+    for e in entries:
+        level = (e.get("level") or "").lower()
+        message = (e.get("message") or "").strip()
+        if not message or level not in interesting_levels:
+            continue
+        prefix = " ".join(message.split()[:6]).lower()
+        if prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(prefix)
+        result = web_research(f"UniFi Ubiquiti {message[:120]}")
+        if result:
+            findings.append(result)
+        if len(findings) >= max_queries:
+            break
+    if not findings:
+        return ""
+    return "ONLINE-RECHERCHE ZU AUFFAELLIGEN FEHLERN (SearXNG, Best-Effort):\n" + "\n\n".join(findings) + "\n\n"
+
+
+def analyze_with_llm(log_text, entries=None):
     """Analysiert die Logs mit dem konfigurierten LLM (OpenAI-kompatible API)."""
     if not log_text or log_text == "Keine Log-Eintraege vorhanden.":
-        return "Keine Logs zum Analysieren vorhanden."
+        return "STATUS: GRUEN\n\nKeine Logs zum Analysieren vorhanden."
 
     threat_intel = build_threat_intel(log_text)
+    research = research_errors(entries or [])
 
     prompt = f"""Du bist ein Netzwerk-Sicherheitsexperte und analysierst UniFi-Netzwerk-Logs.
 
-Analysiere die folgenden Log-Daten und erstelle einen strukturierten deutschen Bericht mit:
+Analysiere die folgenden Log-Daten und erstelle einen strukturierten deutschen Bericht in GENAU
+diesem Format (Reihenfolge und Ueberschriften exakt so beibehalten):
 
-1. **Zusammenfassung** – Kurzer Überblick über die letzten 24 Stunden
-2. **Auffälligkeiten & Warnungen** – Kritische Ereignisse, Fehler, ungewöhnliche Muster
-3. **Sicherheitsrelevantes** – Login-Versuche, Port-Scans, verdächtige IPs, Verbindungsabbrüche
-4. **Netzwerkleistung** – Verbindungsqualität, Latenz-Probleme, Geräteausfälle
-5. **Empfehlungen** – Konkrete Massnahmen basierend auf den Logs
-6. **Status** – Gesamtbewertung: 🟢 Normal / 🟡 Achtung / 🔴 Kritisch
+STATUS: <GRUEN|GELB|ROT>
 
-{threat_intel}LOG-DATEN (letzte 24 Stunden):
+## Kurzfassung
+2-3 Saetze Gesamtueberblick ueber die letzten 24 Stunden - das Wichtigste zuerst.
+
+## Auffaelligkeiten & Warnungen
+Kritische Ereignisse, Fehler, ungewoehnliche Muster.
+
+## Sicherheitsrelevantes
+Login-Versuche, Port-Scans, verdaechtige IPs, Verbindungsabbrueche.
+
+## Netzwerkleistung
+Verbindungsqualitaet, Latenz-Probleme, Geraeteausfaelle.
+
+## Empfehlungen
+Konkrete Massnahmen basierend auf den Logs.
+
+Wichtig: Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
+(GRUEN = alles normal, GELB = Achtung/Beobachten, ROT = kritisch/sofort handeln).
+
+{threat_intel}{research}LOG-DATEN (letzte 24 Stunden):
 {log_text[:8000]}
 
-Erstelle einen prägnanten, informativen Bericht auf Deutsch:"""
+Erstelle den Bericht auf Deutsch, exakt im obigen Format:"""
 
     try:
         resp = requests.post(
@@ -325,6 +404,38 @@ Erstelle einen prägnanten, informativen Bericht auf Deutsch:"""
         return f"Fehler bei der KI-Analyse: {e}"
 
 
+# ── Ampel-Status parsen (STATUS: GRUEN/GELB/ROT am Berichtsanfang) ───────────
+_AMPEL_LABELS = {"gruen": ("Normal", "#2e7d32"), "gelb": ("Achtung", "#f9a825"),
+                 "rot": ("Kritisch", "#c62828")}
+
+
+def parse_ampel(analysis):
+    """Extrahiert die STATUS-Zeile vom Berichtsanfang.
+    Gibt (farbschluessel_oder_None, bericht_ohne_status_zeile) zurueck."""
+    lines = (analysis or "").splitlines()
+    if lines:
+        m = _re.match(r"^\s*STATUS:\s*(GRUEN|GELB|ROT)\s*$", lines[0], _re.IGNORECASE)
+        if m:
+            rest = "\n".join(lines[1:]).lstrip("\n")
+            return m.group(1).lower(), rest
+    return None, analysis
+
+
+def _markdown_lite_to_html(text):
+    """Wandelt die vom LLM erzeugten ## Ueberschriften und **fett** Markierungen
+    in einfaches HTML um (kein vollwertiger Markdown-Parser noetig)."""
+    out = []
+    for line in text.split("\n"):
+        line = _re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+        if line.startswith("## "):
+            out.append(f"<h3>{line[3:].strip()}</h3>")
+        elif not line.strip():
+            out.append("<br>")
+        else:
+            out.append(line + "<br>")
+    return "\n".join(out)
+
+
 # ── E-Mail senden (SMTP-Config aus der GUI) ──────────────────────────────────
 def send_email_report(analysis):
     """Sendet den Analysebericht per E-Mail – SMTP-Config aus der GUI."""
@@ -337,11 +448,9 @@ def send_email_report(analysis):
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
     subject = f"UniFi Netzwerk-Analyse – {now}"
 
-    # HTML-Body erstellen
-    html_analysis = analysis.replace("\n", "<br>").replace("**", "<b>", 1)
-    # Markdown Bold vereinfacht umwandeln
-    import re
-    html_analysis = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', analysis.replace("\n", "<br>"))
+    ampel, body = parse_ampel(analysis)
+    label, color = _AMPEL_LABELS.get(ampel, ("Unbekannt", "#757575"))
+    html_analysis = _markdown_lite_to_html(body)
 
     html_body = f"""<!DOCTYPE html>
 <html>
@@ -349,7 +458,9 @@ def send_email_report(analysis):
 <style>
   body {{ font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; color: #333; }}
   h2 {{ color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 8px; }}
+  h3 {{ color: #1a73e8; margin-top: 22px; margin-bottom: 6px; }}
   .meta {{ background: #f5f5f5; padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 13px; }}
+  .ampel {{ display: inline-block; padding: 8px 16px; border-radius: 6px; color: #fff; font-weight: bold; margin-bottom: 20px; background: {color}; }}
   .content {{ line-height: 1.7; }}
   .footer {{ margin-top: 30px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }}
 </style>
@@ -361,6 +472,7 @@ def send_email_report(analysis):
     <b>Modell:</b> {get_active_model()} &nbsp;|&nbsp;
     <b>Analysezeitraum:</b> Letzte 24 Stunden
   </div>
+  <div class="ampel">Status: {label}</div>
   <div class="content">{html_analysis}</div>
   <div class="footer">Automatisch generiert von UniFi-Analyzer</div>
 </body>
@@ -432,9 +544,10 @@ def run_analysis():
     try:
         messages  = fetch_logs(hours=24)
         log_text  = format_logs_for_analysis(messages)
-        analysis  = analyze_with_llm(log_text)
+        analysis  = analyze_with_llm(log_text, messages)
         send_email_report(analysis)
-        webui.record_result(analysis, status="OK - Mail gesendet")
+        ampel, _ = parse_ampel(analysis)
+        webui.record_result(analysis, status="OK - Mail gesendet", ampel=ampel)
         log.info("=== Analyse abgeschlossen ===")
     except Exception as e:
         webui.record_error(e)
@@ -473,6 +586,7 @@ def get_settings_snapshot():
         "graylog_password": cfg.get("graylog_password"),
         "llm_base_url": cfg.get("llm_base_url"),
         "abuseipdb_key": cfg.get("abuseipdb_key"),
+        "searxng_url": cfg.get("searxng_url"),
         "smtp_host": cfg.get("smtp_host"),
         "smtp_port": cfg.get("smtp_port"),
         "smtp_user": cfg.get("smtp_user"),
