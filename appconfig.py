@@ -10,7 +10,7 @@ _lock = threading.Lock()
 
 # Schluessel, die ueber die GUI editierbar sind
 _EDITABLE = ("ollama_model", "report_schedule", "llm_base_url", "abuseipdb_key",
-             "searxng_url", "llm_prompt_template",
+             "searxng_url", "llm_prompt_template", "llm_prompt_library",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
              "smtp_host", "smtp_port", "smtp_user", "smtp_password",
@@ -28,6 +28,7 @@ _DEFAULTS = {
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
     "searxng_url": os.getenv("SEARXNG_URL", ""),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", ""),
+    "llm_prompt_library": os.getenv("LLM_PROMPT_LIBRARY", "{}"),
     "log_source": os.getenv("LOG_SOURCE", "graylog"),
     "graylog_host": os.getenv("GRAYLOG_HOST", "graylog"),
     "graylog_port": os.getenv("GRAYLOG_PORT", "9000"),

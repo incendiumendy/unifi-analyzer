@@ -8,6 +8,7 @@ Drittsystemen ueber die GUI konfigurierbar (appconfig.py / settings.json).
 
 import os
 import time
+import json
 import smtplib
 import logging
 import requests
@@ -93,6 +94,58 @@ ${log_text}
 
 Erstelle den Bericht auf Deutsch, exakt im obigen Format:"""
 
+PROMPT_TEMPLATE_KURZ = """Du bist ein Netzwerk-Sicherheitsexperte. Analysiere die folgenden UniFi-Netzwerk-Logs und
+erstelle einen SEHR KURZEN Bericht auf Deutsch.
+
+Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
+(GRUEN = alles normal, GELB = Achtung, ROT = kritisch).
+
+Danach in maximal 4-5 Saetzen als Fliesstext (keine Ueberschriften, keine Aufzaehlungen):
+Was ist passiert, gibt es Sicherheitsprobleme, was sollte der Nutzer tun (falls ueberhaupt
+etwas noetig ist). Nur das Wichtigste - kein Rauschen.
+
+${threat_intel}${research}LOG-DATEN (letzte 24 Stunden):
+${log_text}
+
+Kurzbericht auf Deutsch:"""
+
+PROMPT_TEMPLATE_TECHNISCH = """Du bist ein Senior-Netzwerk-Sicherheitsanalyst und erstellst einen technischen
+Detailbericht fuer IT-Administratoren auf Deutsch.
+
+Die allererste Zeile MUSS exakt "STATUS: GRUEN", "STATUS: GELB" oder "STATUS: ROT" sein
+(GRUEN = alles normal, GELB = Achtung/Beobachten, ROT = kritisch/sofort handeln).
+
+Erstelle danach einen detaillierten Bericht mit folgenden Abschnitten (Ueberschriften exakt
+so beibehalten):
+
+## Kurzfassung
+## Zeitachse auffaelliger Ereignisse
+Liste chronologisch die wichtigsten Ereignisse mit Zeitstempel, betroffenem Geraet/IP und
+Einschaetzung.
+## Sicherheitsanalyse
+Detaillierte Analyse aller sicherheitsrelevanten Eintraege: Quelle, Ziel, Port/Protokoll
+(soweit erkennbar), Angriffsmuster, betroffene IPs mit Reputationsdaten.
+## Netzwerkleistung & Stabilitaet
+Verbindungsabbrueche, Roaming-Probleme, Bandbreitenauffaelligkeiten, betroffene Geraete.
+## Technische Empfehlungen
+Konkrete, priorisierte Massnahmen (Sofortmassnahmen vs. mittelfristig).
+## Offene Fragen / Unklarheiten
+Was aus den Logs nicht eindeutig hervorgeht und manuell geprueft werden sollte.
+
+${threat_intel}${research}LOG-DATEN (letzte 24 Stunden):
+${log_text}
+
+Erstelle den technischen Bericht auf Deutsch:"""
+
+# Eingebaute Prompt-Vorlagen, in der GUI ueber ein Dropdown auswaehlbar (nicht
+# loeschbar/veraenderbar - eigene Vorlagen landen stattdessen in der Prompt-
+# Bibliothek, siehe get_prompt_library()).
+PROMPT_PRESETS = {
+    "standard":  {"label": "Standard (ausfuehrlich)", "template": DEFAULT_PROMPT_TEMPLATE},
+    "kurz":      {"label": "Kurzbericht", "template": PROMPT_TEMPLATE_KURZ},
+    "technisch": {"label": "Technisch / Detailliert", "template": PROMPT_TEMPLATE_TECHNISCH},
+}
+
 DEFAULT_EMAIL_SUBJECT_TEMPLATE = "UniFi Netzwerk-Analyse - $date"
 
 
@@ -102,6 +155,43 @@ def get_prompt_template():
 
 def get_email_subject_template():
     return appconfig.get("email_subject") or DEFAULT_EMAIL_SUBJECT_TEMPLATE
+
+
+def get_prompt_library():
+    """Eigene, vom Nutzer gespeicherte Prompt-Vorlagen ({name: text})."""
+    try:
+        return json.loads(appconfig.get("llm_prompt_library") or "{}")
+    except Exception:
+        return {}
+
+
+def manage_prompt_library(action, name, content=""):
+    """Fuegt eine eigene Prompt-Vorlage hinzu/aktualisiert sie oder loescht sie."""
+    name = (name or "").strip()
+    if not name:
+        return get_prompt_library()
+    lib = get_prompt_library()
+    if action == "delete":
+        lib.pop(name, None)
+    else:
+        lib[name] = content
+    appconfig.save({"llm_prompt_library": json.dumps(lib, ensure_ascii=False)})
+    return lib
+
+
+def test_llm_connection(base_url=None):
+    """Prueft die Verbindung zum LLM-Endpoint und liefert die verfuegbaren Modelle."""
+    base = (base_url or get_llm_base_url() or "").rstrip("/")
+    if not base:
+        return {"ok": False, "models": [], "message": "Kein LLM-Endpoint angegeben."}
+    try:
+        r = requests.get(f"{base}/models", timeout=10)
+        r.raise_for_status()
+        models = sorted([m.get("id") for m in r.json().get("data", []) if m.get("id")])
+        return {"ok": True, "models": models,
+                "message": f"Verbindung zu {base} erfolgreich - {len(models)} Modell(e) gefunden."}
+    except Exception as e:
+        return {"ok": False, "models": [], "message": f"Verbindung zu {base} fehlgeschlagen: {e}"}
 
 
 # ── SMTP-Konfiguration (rein GUI-basiert, kein Drittsystem noetig) ───────────
@@ -609,6 +699,9 @@ def get_settings_snapshot():
         "searxng_url": cfg.get("searxng_url"),
         "llm_prompt_template": cfg.get("llm_prompt_template"),
         "llm_prompt_template_default": DEFAULT_PROMPT_TEMPLATE,
+        "llm_prompt_presets": {k: v["template"] for k, v in PROMPT_PRESETS.items()},
+        "llm_prompt_preset_labels": {k: v["label"] for k, v in PROMPT_PRESETS.items()},
+        "llm_prompt_library": get_prompt_library(),
         "smtp_host": cfg.get("smtp_host"),
         "smtp_port": cfg.get("smtp_port"),
         "smtp_user": cfg.get("smtp_user"),
@@ -651,6 +744,8 @@ if __name__ == "__main__":
         get_settings=get_settings_snapshot,
         list_models=list_ollama_models,
         apply_settings=apply_settings,
+        test_llm=test_llm_connection,
+        manage_prompt_library=manage_prompt_library,
     )
     try:
         webui.start(get_settings_snapshot(), port=8088)

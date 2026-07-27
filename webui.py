@@ -2,7 +2,7 @@
 import json
 import threading
 import html
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -21,6 +21,8 @@ _run_callback = None
 _get_settings = None
 _list_models = None
 _apply_settings = None
+_test_llm = None
+_manage_prompt_library = None
 _lock = threading.Lock()
 
 
@@ -29,11 +31,14 @@ def set_run_callback(cb):
     _run_callback = cb
 
 
-def set_settings_callbacks(get_settings=None, list_models=None, apply_settings=None):
-    global _get_settings, _list_models, _apply_settings
+def set_settings_callbacks(get_settings=None, list_models=None, apply_settings=None,
+                            test_llm=None, manage_prompt_library=None):
+    global _get_settings, _list_models, _apply_settings, _test_llm, _manage_prompt_library
     _get_settings = get_settings
     _list_models = list_models
     _apply_settings = apply_settings
+    _test_llm = test_llm
+    _manage_prompt_library = manage_prompt_library
 
 
 def record_start():
@@ -107,6 +112,15 @@ PAGE = """<!DOCTYPE html>
 <span>UniFi/Graylog &rarr; LLM &rarr; AbuseIPDB &rarr; Tagesreport per Mail</span></header>
 <div class="wrap">
  {flash}
+ <script>
+  var _lastKnownStatus = {status_json};
+  function _pollStatus(){{
+   fetch('/healthz').then(function(r){{return r.json();}}).then(function(data){{
+    if(data.status !== _lastKnownStatus){{ location.reload(); }}
+   }}).catch(function(){{}});
+  }}
+  setInterval(_pollStatus, 3000);
+ </script>
  <div class="card">
   <h2>Status</h2>
   <div class="row"><span class="k">Status</span><span class="v {statusclass}">{status}</span></div>
@@ -119,22 +133,92 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>KI-Modell &amp; Zeitplan</h2>
-  <script>const DEFAULT_PROMPT_TEMPLATE = {default_prompt_json};</script>
+  <script>
+   const DEFAULT_PROMPT_TEMPLATE = {default_prompt_json};
+   const PRESET_TEMPLATES = {preset_templates_json};
+   const CUSTOM_TEMPLATES = {custom_templates_json};
+
+   function testLLM(){{
+    const el = document.getElementById('llmTestResult');
+    el.textContent = 'Teste Verbindung...';
+    el.style.color = '#9a9aa5';
+    const url = document.getElementById('llmurl').value;
+    fetch('/test_llm?base_url=' + encodeURIComponent(url)).then(function(r){{return r.json();}}).then(function(data){{
+     el.textContent = data.message;
+     el.style.color = data.ok ? '#3ecf6b' : '#ef5350';
+     if(data.ok && data.models && data.models.length){{
+      const dl = document.getElementById('model_list');
+      dl.innerHTML = '';
+      data.models.forEach(function(m){{
+       const opt = document.createElement('option');
+       opt.value = m;
+       dl.appendChild(opt);
+      }});
+     }}
+    }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
+   }}
+
+   function onPromptSelect(){{
+    const v = document.getElementById('promptSelect').value;
+    if(!v) return;
+    if(v.indexOf('preset:') === 0){{
+     document.getElementById('prompt').value = PRESET_TEMPLATES[v.slice(7)] || '';
+    }} else if(v.indexOf('custom:') === 0){{
+     document.getElementById('prompt').value = CUSTOM_TEMPLATES[v.slice(7)] || '';
+    }}
+   }}
+
+   function _savePrompt(action, name, content){{
+    return fetch('/promptlib', {{method:'POST', headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+     body: 'action=' + encodeURIComponent(action) + '&name=' + encodeURIComponent(name) + '&content=' + encodeURIComponent(content || '')}});
+   }}
+
+   function addPromptToLibrary(){{
+    const name = window.prompt('Name fuer die neue Vorlage:');
+    if(!name) return;
+    _savePrompt('save', name, document.getElementById('prompt').value).then(function(){{ location.reload(); }});
+   }}
+
+   function updatePromptInLibrary(){{
+    const v = document.getElementById('promptSelect').value;
+    if(v.indexOf('custom:') !== 0){{ alert('Bitte zuerst eine eigene Vorlage aus der Liste waehlen.'); return; }}
+    _savePrompt('save', v.slice(7), document.getElementById('prompt').value).then(function(){{ location.reload(); }});
+   }}
+
+   function deletePromptFromLibrary(){{
+    const v = document.getElementById('promptSelect').value;
+    if(v.indexOf('custom:') !== 0){{ alert('Bitte zuerst eine eigene Vorlage aus der Liste waehlen.'); return; }}
+    const name = v.slice(7);
+    if(!confirm('Vorlage "' + name + '" wirklich loeschen?')) return;
+    _savePrompt('delete', name).then(function(){{ location.reload(); }});
+   }}
+  </script>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="model">
    <label for="llmurl">LLM-Endpoint (OpenAI-kompatibel, z.B. LM Studio/Ollama/OpenAI)</label>
    <input type="text" name="llm_base_url" id="llmurl" value="{llm_base_url}" placeholder="http://lm-studio:1234/v1">
+   <button type="button" class="btn-secondary" onclick="testLLM()">Verbindung testen &amp; Modelle laden</button>
+   <span id="llmTestResult" class="muted"></span>
    <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
    <input type="text" name="ollama_model" id="model" list="model_list" value="{model}">
    <datalist id="model_list">{model_options}</datalist>
    <label for="time">Uhrzeit fuer den taeglichen Report</label>
    <input type="time" name="report_schedule" id="time" value="{schedule}">
-   <label for="prompt">LLM-Prompt-Vorlage (Platzhalter: $threat_intel, $research, $log_text)</label>
+   <label for="promptSelect">LLM-Prompt-Vorlage waehlen</label>
+   <select id="promptSelect" onchange="onPromptSelect()">
+    <option value="">-- eigener Text (unten) --</option>
+    <optgroup label="Eingebaut">{preset_options}</optgroup>
+    <optgroup label="Eigene Vorlagen">{custom_prompt_options}</optgroup>
+   </select>
+   <button type="button" class="btn-secondary" onclick="addPromptToLibrary()">Hinzufuegen</button>
+   <button type="button" class="btn-secondary" onclick="updatePromptInLibrary()">Aktualisieren</button>
+   <button type="button" class="btn-secondary" onclick="deletePromptFromLibrary()">Loeschen</button>
+   <label for="prompt">Prompt-Text (Platzhalter: $threat_intel, $research, $log_text)</label>
    <textarea name="llm_prompt_template" id="prompt" rows="12">{llm_prompt_template}</textarea>
    <br><button type="submit">&#128190; Speichern</button>
    <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE">Standard wiederherstellen</button>
   </form>
-  <div class="muted">Aenderungen werden persistent gespeichert und sofort wirksam (kein Neustart noetig). Prompt-Vorlage leer lassen fuer die eingebaute Standard-Vorlage.</div>
+  <div class="muted">Aenderungen werden persistent gespeichert und sofort wirksam (kein Neustart noetig). Prompt-Text leer lassen fuer die eingebaute Standard-Vorlage. Eine Vorlage aus dem Dropdown laedt ihren Text in das Textfeld - erst danach "Speichern" wirkt das dauerhaft als aktiver Prompt.</div>
  </div>
  <div class="card">
   <h2>Log-Quelle</h2>
@@ -233,6 +317,7 @@ _SETTINGS_DEFAULTS = {
     "graylog_user": "admin", "graylog_password": "",
     "llm_base_url": "", "abuseipdb_key": "", "searxng_url": "",
     "llm_prompt_template": "", "llm_prompt_template_default": "",
+    "llm_prompt_presets": {}, "llm_prompt_preset_labels": {}, "llm_prompt_library": {},
     "smtp_host": "", "smtp_port": 465, "smtp_user": "", "smtp_password": "",
     "smtp_security": "ssl", "smtp_from": "", "email_to": "", "email_subject": "",
     "unifi_block_enabled": False, "unifi_dry_run": True, "unifi_host": "",
@@ -299,6 +384,20 @@ def make_handler(cfg):
                 return html.escape(str(st.get(key, default) or default))
 
             default_prompt_json = json.dumps(st.get("llm_prompt_template_default") or "").replace("</", "<\\/")
+            preset_templates = st.get("llm_prompt_presets") or {}
+            preset_labels = st.get("llm_prompt_preset_labels") or {}
+            custom_templates = st.get("llm_prompt_library") or {}
+            preset_templates_json = json.dumps(preset_templates).replace("</", "<\\/")
+            custom_templates_json = json.dumps(custom_templates).replace("</", "<\\/")
+            preset_options = "".join(
+                '<option value="preset:{0}">{1}</option>'.format(html.escape(k), html.escape(preset_labels.get(k, k)))
+                for k in preset_templates
+            )
+            custom_prompt_options = "".join(
+                '<option value="custom:{0}">{0}</option>'.format(html.escape(name))
+                for name in sorted(custom_templates.keys())
+            ) or '<option value="" disabled>(keine)</option>'
+            status_json = json.dumps(status).replace("</", "<\\/")
 
             return PAGE.format(
                 flash=flash_html,
@@ -334,6 +433,11 @@ def make_handler(cfg):
                 searxng_url=esc("searxng_url"),
                 llm_prompt_template=esc("llm_prompt_template"),
                 default_prompt_json=default_prompt_json,
+                preset_templates_json=preset_templates_json,
+                custom_templates_json=custom_templates_json,
+                preset_options=preset_options,
+                custom_prompt_options=custom_prompt_options,
+                status_json=status_json,
                 email_subject=esc("email_subject"),
                 ub_enabled=("checked" if st.get("unifi_block_enabled") else ""),
                 ub_dry=("checked" if st.get("unifi_dry_run") else ""),
@@ -366,6 +470,19 @@ def make_handler(cfg):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": STATE["last_status"]}).encode())
+            elif self.path.startswith("/test_llm"):
+                qs = parse_qs(urlparse(self.path).query)
+                base_url = (qs.get("base_url") or [""])[0]
+                if _test_llm:
+                    result = _test_llm(base_url or None)
+                else:
+                    result = {"ok": False, "models": [], "message": "Nicht verfuegbar"}
+                body = json.dumps(result).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self.send_response(404); self.end_headers()
 
@@ -448,6 +565,16 @@ def make_handler(cfg):
                     except Exception as e:  # noqa
                         pass
                 self._redirect("/saved")
+            elif self.path == "/promptlib":
+                action = form.get("action", "")
+                name = form.get("name", "")
+                content = form.get("content", "")
+                if _manage_prompt_library:
+                    try:
+                        _manage_prompt_library(action, name, content)
+                    except Exception:  # noqa
+                        pass
+                self._redirect("/")
             else:
                 self.send_response(404); self.end_headers()
     return Handler
