@@ -213,6 +213,25 @@ def get_smtp_config():
     }
 
 
+# Syslog-Schweregrade (RFC 5424) - Graylog liefert "level" oft als Zahl statt
+# als Text, hier auf sprechende Namen abgebildet (u.a. damit research_errors()
+# die richtigen Eintraege als "interessant" erkennt).
+_SYSLOG_LEVEL_NAMES = {
+    0: "emerg", 1: "alert", 2: "crit", 3: "error",
+    4: "warn", 5: "notice", 6: "info", 7: "debug",
+}
+
+
+def _normalize_level(raw):
+    if isinstance(raw, bool):
+        return str(raw)
+    if isinstance(raw, int):
+        return _SYSLOG_LEVEL_NAMES.get(raw, str(raw))
+    if isinstance(raw, str) and raw.strip().isdigit():
+        return _SYSLOG_LEVEL_NAMES.get(int(raw.strip()), raw)
+    return str(raw or "")
+
+
 # ── Log-Quelle 1: Graylog ─────────────────────────────────────────────────────
 def fetch_logs_from_graylog(hours=24):
     """Holt UniFi-Logs der letzten N Stunden aus Graylog, normalisiert."""
@@ -241,7 +260,7 @@ def fetch_logs_from_graylog(hours=24):
             out.append({
                 "timestamp": (msg.get("timestamp") or "")[:19],
                 "source":    msg.get("source", "unbekannt"),
-                "level":     msg.get("level", ""),
+                "level":     _normalize_level(msg.get("level", "")),
                 "message":   msg.get("message", msg.get("short_message", "")),
             })
         return out
@@ -461,7 +480,7 @@ def research_errors(entries, max_queries=3):
     seen_prefixes = set()
     findings = []
     for e in entries:
-        level = (e.get("level") or "").lower()
+        level = str(e.get("level") or "").lower()
         message = (e.get("message") or "").strip()
         if not message or level not in interesting_levels:
             continue
