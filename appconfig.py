@@ -9,7 +9,8 @@ SETTINGS_PATH = os.getenv("SETTINGS_PATH", "/data/settings.json")
 _lock = threading.Lock()
 
 # Schluessel, die ueber die GUI editierbar sind
-_EDITABLE = ("ollama_model", "report_schedule", "report_language", "llm_base_url", "abuseipdb_key",
+_EDITABLE = ("ollama_model", "report_schedule", "report_frequency", "report_weekday",
+             "report_day_of_month", "report_language", "llm_base_url", "abuseipdb_key",
              "searxng_url", "llm_prompt_template", "llm_prompt_library",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
@@ -24,6 +25,9 @@ _EDITABLE = ("ollama_model", "report_schedule", "report_language", "llm_base_url
 _DEFAULTS = {
     "ollama_model": os.getenv("OLLAMA_MODEL", "gemma4:12b"),
     "report_schedule": os.getenv("REPORT_SCHEDULE", "08:00"),
+    "report_frequency": os.getenv("REPORT_FREQUENCY", "daily"),  # daily|weekly|monthly
+    "report_weekday": os.getenv("REPORT_WEEKDAY", "mon"),  # mon..sun, nur bei weekly
+    "report_day_of_month": int(os.getenv("REPORT_DAY_OF_MONTH", "1")),  # 1-31, nur bei monthly
     "report_language": os.getenv("REPORT_LANGUAGE", "de"),
     "llm_base_url": os.getenv("LLM_BASE_URL", os.getenv("LM_STUDIO_BASE_URL", "http://lm-studio:1234/v1")),
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
@@ -84,6 +88,10 @@ def save(updates):
         if k not in _EDITABLE:
             continue
         if isinstance(v, bool) or isinstance(v, int):
+            cur[k] = v
+        elif k == "llm_prompt_template":
+            # Darf explizit geleert werden - das ist der GUI-Weg, um zur
+            # eingebauten Standard-Vorlage zurueckzukehren (siehe get_prompt_template()).
             cur[k] = v
         elif v:
             cur[k] = v

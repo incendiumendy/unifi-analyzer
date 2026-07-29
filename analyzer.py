@@ -10,6 +10,7 @@ import os
 import re
 import time
 import json
+import calendar
 import smtplib
 import logging
 import requests
@@ -804,6 +805,71 @@ def get_active_schedule():
     return appconfig.get("report_schedule") or REPORT_SCHEDULE
 
 
+# Wochentags-Reihenfolge passend zu datetime.weekday() (Montag=0..Sonntag=6).
+_WEEKDAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+_WEEKDAY_LABELS = {
+    "de": {"mon": "Montag", "tue": "Dienstag", "wed": "Mittwoch", "thu": "Donnerstag",
+           "fri": "Freitag", "sat": "Samstag", "sun": "Sonntag"},
+    "en": {"mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
+           "fri": "Friday", "sat": "Saturday", "sun": "Sunday"},
+}
+
+
+def get_report_frequency():
+    freq = (appconfig.get("report_frequency") or "daily").lower()
+    return freq if freq in ("daily", "weekly", "monthly") else "daily"
+
+
+def get_report_weekday():
+    wd = (appconfig.get("report_weekday") or "mon").lower()
+    return wd if wd in _WEEKDAY_ORDER else "mon"
+
+
+def get_report_day_of_month():
+    try:
+        day = int(appconfig.get("report_day_of_month") or 1)
+    except (TypeError, ValueError):
+        day = 1
+    return max(1, min(31, day))
+
+
+def _is_due_today(freq, weekday, day_of_month, now=None):
+    """Prueft, ob der Report bei der gewaehlten Haeufigkeit heute faellig ist.
+    Bei monthly wird ein zu hoher Tag (z.B. 31) in kuerzeren Monaten auf den
+    letzten Tag des Monats geklemmt, damit der Report nie ausfaellt."""
+    now = now or datetime.now()
+    if freq == "weekly":
+        return now.weekday() == _WEEKDAY_ORDER.index(weekday)
+    if freq == "monthly":
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        return now.day == min(day_of_month, last_day)
+    return True  # daily
+
+
+def get_schedule_summary():
+    """Menschenlesbare Zeitplan-Beschreibung fuer die Status-Karte."""
+    lang = get_report_language()
+    time_str = get_active_schedule()
+    freq = get_report_frequency()
+    if freq == "weekly":
+        wd_label = _WEEKDAY_LABELS[lang][get_report_weekday()]
+        return f"Woechentlich, {wd_label}, {time_str}" if lang == "de" else f"Weekly, {wd_label}, {time_str}"
+    if freq == "monthly":
+        dom = get_report_day_of_month()
+        return f"Monatlich, Tag {dom}, {time_str}" if lang == "de" else f"Monthly, day {dom}, {time_str}"
+    return f"Taeglich, {time_str}" if lang == "de" else f"Daily, {time_str}"
+
+
+def _scheduled_tick():
+    """Taeglicher Trigger von 'schedule' zur eingestellten Uhrzeit - fuehrt
+    run_analysis() nur aus, wenn die konfigurierte Haeufigkeit heute faellig
+    ist (siehe _is_due_today())."""
+    if _is_due_today(get_report_frequency(), get_report_weekday(), get_report_day_of_month()):
+        run_analysis()
+    else:
+        log.info(f"Kein Report faellig heute (Haeufigkeit={get_report_frequency()}).")
+
+
 def list_ollama_models():
     """Holt die am konfigurierten LLM-Endpoint geladenen Modelle (OpenAI-kompatible API)."""
     try:
@@ -818,10 +884,9 @@ def list_ollama_models():
 def apply_settings(updates):
     """Speichert Settings und setzt den Zeitplan live neu."""
     appconfig.save(updates)
-    new_time = get_active_schedule()
     schedule.clear()
-    schedule.every().day.at(new_time).do(run_analysis)
-    log.info(f"Einstellungen aktualisiert: Modell={get_active_model()}, Uhrzeit={new_time}")
+    schedule.every().day.at(get_active_schedule()).do(_scheduled_tick)
+    log.info(f"Einstellungen aktualisiert: Modell={get_active_model()}, Zeitplan={get_schedule_summary()}")
     return appconfig.load()
 
 
@@ -863,6 +928,10 @@ def get_settings_snapshot():
     cfg = appconfig.load()
     return {
         "schedule": get_active_schedule(),
+        "schedule_summary": get_schedule_summary(),
+        "report_frequency": get_report_frequency(),
+        "report_weekday": get_report_weekday(),
+        "report_day_of_month": get_report_day_of_month(),
         "email": get_email_to(),
         "model": get_active_model(),
         "abuseipdb": bool(get_abuseipdb_key()),
@@ -911,7 +980,7 @@ if __name__ == "__main__":
     log.info(f"Graylog:  {appconfig.get('graylog_host')}:{appconfig.get('graylog_port')}")
     log.info(f"LLM:      {get_llm_base_url()}  Modell: {get_active_model()}")
     log.info(f"E-Mail:   {get_email_to() or '(nicht konfiguriert)'}")
-    log.info(f"Bericht:  taeglich um {REPORT_SCHEDULE}")
+    log.info(f"Bericht:  {get_schedule_summary()}")
 
     # SMTP-Config beim Start pruefen
     smtp_cfg = get_smtp_config()
@@ -938,8 +1007,8 @@ if __name__ == "__main__":
     except Exception as e:
         log.warning(f"WebUI konnte nicht gestartet werden: {e}")
 
-    schedule.every().day.at(get_active_schedule()).do(run_analysis)
-    log.info(f"Naechste Analyse geplant um {get_active_schedule()} Uhr.")
+    schedule.every().day.at(get_active_schedule()).do(_scheduled_tick)
+    log.info(f"Naechster Report-Check taeglich um {get_active_schedule()} Uhr (Zeitplan: {get_schedule_summary()}).")
 
     while True:
         schedule.run_pending()

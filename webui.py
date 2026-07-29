@@ -17,6 +17,11 @@ STATE = {
 _AMPEL_LABELS = {"gruen": ("Normal", "ok"), "gelb": ("Achtung", "warn"),
                  "rot": ("Kritisch", "err")}
 
+_WEEKDAY_LABELS_DE = [
+    ("mon", "Montag"), ("tue", "Dienstag"), ("wed", "Mittwoch"), ("thu", "Donnerstag"),
+    ("fri", "Freitag"), ("sat", "Samstag"), ("sun", "Sonntag"),
+]
+
 _run_callback = None
 _get_settings = None
 _list_models = None
@@ -136,14 +141,14 @@ PAGE = """<!DOCTYPE html>
   <h2>Status</h2>
   <div class="row"><span class="k">Status</span><span class="v {statusclass}">{status}</span></div>
   <div class="row"><span class="k">Letzte Analyse</span><span class="v">{last_run}</span></div>
-  <div class="row"><span class="k">Zeitplan (taeglich)</span><span class="v">{schedule}</span></div>
+  <div class="row"><span class="k">Zeitplan</span><span class="v">{schedule_summary}</span></div>
   <div class="row"><span class="k">Empfaenger</span><span class="v">{email}</span></div>
   <div class="row"><span class="k">Aktives Modell</span><span class="v">{model}</span></div>
   <div class="row"><span class="k">Log-Quelle</span><span class="v">{log_source_label}</span></div>
   <div class="row"><span class="k">AbuseIPDB</span><span class="v {abuseclass}">{abuse}</span></div>
  </div>
  <div class="card">
-  <h2>KI-Modell &amp; Zeitplan</h2>
+  <h2>KI-Modell</h2>
   <script>
    const DEFAULT_PROMPT_TEMPLATE = {default_prompt_json};
    const PRESET_TEMPLATES = {preset_templates_json};
@@ -183,6 +188,18 @@ PAGE = """<!DOCTYPE html>
     el.hidden = !el.hidden;
    }}
 
+   function onFrequencyChange(){{
+    const v = document.getElementById('freq').value;
+    document.getElementById('freqWeekly').style.display = (v === 'weekly') ? '' : 'none';
+    document.getElementById('freqMonthly').style.display = (v === 'monthly') ? '' : 'none';
+   }}
+
+   function checkPromptDirty(){{
+    const ta = document.getElementById('prompt');
+    const badge = document.getElementById('promptDirty');
+    badge.style.display = (ta.value !== ta.dataset.original) ? 'inline' : 'none';
+   }}
+
    function onPromptSelect(){{
     const v = document.getElementById('promptSelect').value;
     if(!v) return;
@@ -191,6 +208,7 @@ PAGE = """<!DOCTYPE html>
     }} else if(v.indexOf('custom:') === 0){{
      document.getElementById('prompt').value = CUSTOM_TEMPLATES[v.slice(7)] || '';
     }}
+    checkPromptDirty();
    }}
 
    function _savePrompt(action, name, content){{
@@ -218,6 +236,24 @@ PAGE = """<!DOCTYPE html>
     _savePrompt('delete', name).then(function(){{ location.reload(); }});
    }}
   </script>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Wo das Sprachmodell fuer die Analyse laeuft</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('modelHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="modelHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>LLM-Endpoint: OpenAI-kompatible API-Adresse eures lokalen oder entfernten Modells (z.B. LM Studio, Ollama mit /v1-Kompatibilitaet, OpenAI). Endet meist auf <code>/v1</code>.</li>
+    <li>"Verbindung testen" laedt die am Endpoint verfuegbaren Modelle in die Modell-Liste.</li>
+    <li>Modell: Name des zu verwendenden Modells - frei eintragbar, falls es nicht in der Liste erscheint.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>LLM endpoint: OpenAI-compatible API address of your local or remote model (e.g. LM Studio, Ollama with /v1 compatibility, OpenAI). Usually ends in <code>/v1</code>.</li>
+    <li>"Test connection" loads the models available at that endpoint into the model list.</li>
+    <li>Model: name of the model to use - you can type a custom one if it isn't listed.</li>
+   </ul>
+  </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="model">
    <label for="llmurl">LLM-Endpoint (OpenAI-kompatibel, z.B. LM Studio/Ollama/OpenAI)</label>
@@ -227,31 +263,85 @@ PAGE = """<!DOCTYPE html>
    <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
    <input type="text" name="ollama_model" id="model" list="model_list" value="{model}" onfocus="onModelFocus(this)" onblur="onModelBlur(this)">
    <datalist id="model_list">{model_options}</datalist>
-   <label for="time">Uhrzeit fuer den taeglichen Report</label>
+   <br><button type="submit">&#128190; Speichern</button>
+  </form>
+ </div>
+ <div class="card">
+  <h2>Zeitplan &amp; Sprache</h2>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Wann und in welcher Sprache der Report erstellt wird</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('scheduleHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="scheduleHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>Haeufigkeit: taeglich, woechentlich (an einem festen Wochentag) oder monatlich (an einem festen Tag im Monat - faellt in kuerzeren Monaten automatisch auf den letzten Tag).</li>
+    <li>Die Uhrzeit gilt fuer alle drei Haeufigkeiten.</li>
+    <li>Berichtssprache bestimmt E-Mail-Text, Status-Woerter und die Sprache der eingebauten Standard-Prompt-Vorlage.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>Frequency: daily, weekly (on a fixed weekday) or monthly (on a fixed day of month - automatically clamped to the last day in shorter months).</li>
+    <li>The time applies to all three frequencies.</li>
+    <li>Report language controls the email text, status words, and the language of the built-in default prompt template.</li>
+   </ul>
+  </div>
+  <form method="POST" action="/settings">
+   <input type="hidden" name="form_id" value="schedule">
+   <label for="freq">Haeufigkeit</label>
+   <select name="report_frequency" id="freq" onchange="onFrequencyChange()">
+    <option value="daily" {freq_daily_sel}>Taeglich</option>
+    <option value="weekly" {freq_weekly_sel}>Woechentlich</option>
+    <option value="monthly" {freq_monthly_sel}>Monatlich</option>
+   </select>
+   <div id="freqWeekly" style="{freq_weekly_style}">
+    <label for="weekday">Wochentag</label>
+    <select name="report_weekday" id="weekday">{weekday_options}</select>
+   </div>
+   <div id="freqMonthly" style="{freq_monthly_style}">
+    <label for="dom">Tag im Monat (1-31, wird bei kurzen Monaten auf den Monatsletzten geklemmt)</label>
+    <input type="number" name="report_day_of_month" id="dom" min="1" max="31" value="{report_day_of_month}">
+   </div>
+   <label for="time">Uhrzeit</label>
    <input type="time" name="report_schedule" id="time" value="{schedule}">
    <label for="replang">Berichtssprache (E-Mail-Text, Status-Woerter, Standard-Prompt)</label>
    <select name="report_language" id="replang">
     <option value="de" {lang_de_sel}>Deutsch</option>
     <option value="en" {lang_en_sel}>English</option>
    </select>
-   <div class="label-row">
-    <label for="promptSelect" style="margin:0">LLM-Prompt-Vorlage waehlen</label>
-    <button type="button" class="help-toggle" onclick="toggleHelp('promptHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
-   </div>
-   <div id="promptHelp" class="helpbox" hidden>
-    So funktioniert die Vorlagen-Auswahl:
-    <ul>
-     <li><b>Eingebaut</b>: feste Vorlagen (Standard/Kurz/Technisch, DE/EN) - nicht veraenderbar.</li>
-     <li><b>Eigene Vorlagen</b>: eure selbst gespeicherten Texte, siehe Buttons unten.</li>
-     <li>Eine Auswahl aus der Liste laedt den Text nur in das Textfeld darunter - aktiv wird er erst,
-      wenn ihr danach auf "Speichern" klickt.</li>
-     <li><b>Hinzufuegen</b> speichert den aktuellen Textfeld-Inhalt als neue eigene Vorlage.
-      <b>Aktualisieren</b>/<b>Loeschen</b> wirken auf die aktuell im Dropdown gewaehlte eigene Vorlage.</li>
-     <li>Platzhalter im Text: <code>$threat_intel</code> (AbuseIPDB-Ergebnisse), <code>$research</code>
-      (SearXNG-Recherche), <code>$log_text</code> (die Rohlogs) - werden beim Erstellen des Reports ersetzt.</li>
-     <li>Textfeld leer lassen + Speichern = eingebaute Standard-Vorlage der gewaehlten Berichtssprache wird verwendet.</li>
-    </ul>
-   </div>
+   <br><button type="submit">&#128190; Speichern</button>
+  </form>
+ </div>
+ <div class="card">
+  <h2>Prompt-Vorlage</h2>
+  <div class="label-row">
+   <label for="promptSelect" style="margin:0">Vorlage laden (Eingebaut oder Eigene)</label>
+   <button type="button" class="help-toggle" onclick="toggleHelp('promptHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="promptHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li><b>Eingebaut</b>: feste Vorlagen (Standard/Kurz/Technisch, DE/EN) - nicht veraenderbar.</li>
+    <li><b>Eigene Vorlagen</b>: eure gespeicherten Texte - verwaltet ueber Hinzufuegen/Aktualisieren/Loeschen.</li>
+    <li>Eine Auswahl aus der Liste laedt den Text nur in das Feld unten - erst "Speichern" macht ihn aktiv
+     (ein "nicht gespeichert"-Hinweis erscheint, solange das Feld vom gespeicherten Stand abweicht).</li>
+    <li>Platzhalter im Text: <code>$threat_intel</code> (AbuseIPDB), <code>$research</code> (SearXNG),
+     <code>$log_text</code> (Rohlogs).</li>
+    <li>Leeres Feld + Speichern = eingebaute Standard-Vorlage der gewaehlten Berichtssprache.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li><b>Built-in</b>: fixed templates (Standard/Short/Technical, DE/EN) - cannot be changed.</li>
+    <li><b>Custom templates</b>: your saved texts - manage via Add/Update/Delete.</li>
+    <li>Picking one from the list only loads its text into the field below - only "Save" makes it active
+     (an "unsaved" hint appears while the field differs from the saved version).</li>
+    <li>Placeholders: <code>$threat_intel</code> (AbuseIPDB), <code>$research</code> (SearXNG),
+     <code>$log_text</code> (raw logs).</li>
+    <li>Empty field + Save = built-in default template for the selected report language.</li>
+   </ul>
+  </div>
+  <form method="POST" action="/settings">
+   <input type="hidden" name="form_id" value="prompt">
    <div class="btnrow">
     <select id="promptSelect" onchange="onPromptSelect()">
      <option value="">-- eigener Text (unten) --</option>
@@ -266,15 +356,33 @@ PAGE = """<!DOCTYPE html>
     <button type="button" class="btn-secondary" onclick="deletePromptFromLibrary()">&#128465; Loeschen</button>
    </div>
    <label for="prompt">Prompt-Text (Platzhalter: $threat_intel, $research, $log_text)</label>
-   <textarea name="llm_prompt_template" id="prompt" rows="12">{llm_prompt_template}</textarea>
+   <textarea name="llm_prompt_template" id="prompt" rows="12" oninput="checkPromptDirty()">{llm_prompt_template}</textarea>
+   <script>document.getElementById('prompt').dataset.original = document.getElementById('prompt').value;</script>
    <div class="btnrow">
     <button type="submit">&#128190; Speichern</button>
-    <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE">Standard wiederherstellen</button>
+    <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE; checkPromptDirty();">Standard wiederherstellen</button>
+    <span id="promptDirty" class="warn" style="font-size:12px;display:none">&#9679; nicht gespeichert / unsaved</span>
    </div>
   </form>
  </div>
  <div class="card">
   <h2>Log-Quelle</h2>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Woher die Logs fuer die Analyse kommen</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('logsourceHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="logsourceHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>Graylog: Standard-Log-Quelle, braucht Host/Port/Zugangsdaten eurer Graylog-Instanz.</li>
+    <li>UniFi-Controller direkt (Beta): nutzt Host/API-Key aus der Gateway-Sperrung weiter unten, kein Graylog noetig; haengt von Controller-/Firmware-Version ab.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>Graylog: default log source, needs host/port/credentials of your Graylog instance.</li>
+    <li>UniFi controller directly (beta): uses host/API key from the gateway blocking section below, no Graylog needed; depends on controller/firmware version.</li>
+   </ul>
+  </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="logsource">
    <label for="lsrc">Woher die Logs fuer die Analyse kommen</label>
@@ -294,6 +402,24 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>E-Mail / SMTP</h2>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Wie und wohin der Report per Mail verschickt wird</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('smtpHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="smtpHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>Eigenstaendige SMTP-Konfiguration fuer den Report-Versand, unabhaengig von anderen Systemen.</li>
+    <li>Verschluesselung: SSL (meist Port 465), STARTTLS (meist Port 587) oder Keine.</li>
+    <li>Betreff-Vorlage akzeptiert den Platzhalter <code>$date</code>.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>Standalone SMTP configuration for sending the report, independent of other systems.</li>
+    <li>Encryption: SSL (usually port 465), STARTTLS (usually port 587), or None.</li>
+    <li>Subject template accepts the <code>$date</code> placeholder.</li>
+   </ul>
+  </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="smtp">
    <div class="grid2">
@@ -326,6 +452,22 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>Bedrohungserkennung &amp; Recherche</h2>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Optionale IP-Reputation und Online-Recherche</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('abuseHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="abuseHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>AbuseIPDB API-Key (kostenlos auf abuseipdb.com erstellbar): ohne Key wird die IP-Reputationspruefung uebersprungen.</li>
+    <li>SearXNG-URL (optional): eigene Instanz mit aktiviertem JSON-Format (<code>search.formats</code> in settings.yml), fuer Online-Recherche zu auffaelligen Fehlermeldungen.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>AbuseIPDB API key (free at abuseipdb.com): without a key, IP reputation checks are skipped.</li>
+    <li>SearXNG URL (optional): your own instance with JSON format enabled (<code>search.formats</code> in settings.yml), used for online research on unusual error messages.</li>
+   </ul>
+  </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="abuseipdb">
    <label for="aik">AbuseIPDB API-Key</label>
@@ -338,6 +480,28 @@ PAGE = """<!DOCTYPE html>
  </div>
  <div class="card">
   <h2>UniFi-Gateway IP-Sperrung</h2>
+  <div class="label-row">
+   <span style="color:#9a9aa5;font-size:13px">Automatisches Blockieren boesartiger IPs am Gateway</span>
+   <button type="button" class="help-toggle" onclick="toggleHelp('blockHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+  </div>
+  <div id="blockHelp" class="helpbox" hidden>
+   <b>Deutsch:</b>
+   <ul>
+    <li>Sperrung aktiviert: Master-Schalter fuer automatisches Blockieren am Gateway.</li>
+    <li>Dry-Run: nur simulieren/loggen, es wird nichts wirklich gesperrt - empfohlen zum ersten Testen.</li>
+    <li>UniFi-Host/API-Key: Adresse und Integration-API-Key (X-API-KEY) eures Controllers; werden auch fuer "UniFi-Controller direkt" als Log-Quelle verwendet.</li>
+    <li>Block-Schwelle: Mindest-AbuseIPDB-Score, ab dem eine IP gesperrt wird.</li>
+    <li>Allowlist: IPs/CIDR-Bloecke, kommagetrennt, die nie gesperrt werden.</li>
+   </ul>
+   <b>English:</b>
+   <ul>
+    <li>Blocking enabled: master switch for automatic blocking on the gateway.</li>
+    <li>Dry-run: only simulate/log, nothing is actually blocked - recommended for initial testing.</li>
+    <li>UniFi host/API key: address and Integration API key (X-API-KEY) of your controller; also used for "UniFi controller directly" as log source.</li>
+    <li>Block threshold: minimum AbuseIPDB score at which an IP gets blocked.</li>
+    <li>Allowlist: comma-separated IPs/CIDR blocks that are never blocked.</li>
+   </ul>
+  </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="unifiblock">
    <label><input type="checkbox" name="unifi_block_enabled" value="1" {ub_enabled}> Sperrung aktiviert</label>
@@ -370,7 +534,8 @@ PAGE = """<!DOCTYPE html>
 
 
 _SETTINGS_DEFAULTS = {
-    "schedule": "-", "email": "-", "model": "-", "abuseipdb": False,
+    "schedule": "-", "schedule_summary": "-", "email": "-", "model": "-", "abuseipdb": False,
+    "report_frequency": "daily", "report_weekday": "mon", "report_day_of_month": 1,
     "report_language": "de",
     "log_source": "graylog",
     "graylog_host": "graylog", "graylog_port": "9000",
@@ -464,11 +629,28 @@ def make_handler():
             status_json = json.dumps(status).replace("</", "<\\/")
             report_language = st.get("report_language") or "de"
 
+            frequency = st.get("report_frequency") or "daily"
+            weekday = st.get("report_weekday") or "mon"
+            weekday_options = "".join(
+                '<option value="{0}" {1}>{2}</option>'.format(
+                    key, "selected" if key == weekday else "", label
+                )
+                for key, label in _WEEKDAY_LABELS_DE
+            )
+
             return PAGE.format(
                 flash=flash_html,
                 status=html.escape(status), statusclass=sc,
                 last_run=html.escape(str(STATE["last_run"] or "-")),
                 schedule=html.escape(str(st.get("schedule", "-"))),
+                schedule_summary=html.escape(str(st.get("schedule_summary", "-"))),
+                freq_daily_sel=("selected" if frequency == "daily" else ""),
+                freq_weekly_sel=("selected" if frequency == "weekly" else ""),
+                freq_monthly_sel=("selected" if frequency == "monthly" else ""),
+                freq_weekly_style=("" if frequency == "weekly" else "display:none"),
+                freq_monthly_style=("" if frequency == "monthly" else "display:none"),
+                weekday_options=weekday_options,
+                report_day_of_month=html.escape(str(st.get("report_day_of_month", 1) or 1)),
                 email=html.escape(str(st.get("email", "-"))),
                 model=html.escape(str(cur_model)),
                 abuse=("aktiv" if abuse_active else "nicht konfiguriert"),
@@ -575,12 +757,25 @@ def make_handler():
                         updates["llm_base_url"] = form["llm_base_url"].strip()
                     if form.get("ollama_model"):
                         updates["ollama_model"] = form["ollama_model"].strip()
+                elif form_id == "schedule":
                     if form.get("report_schedule"):
                         updates["report_schedule"] = form["report_schedule"]
+                    if form.get("report_frequency") in ("daily", "weekly", "monthly"):
+                        updates["report_frequency"] = form["report_frequency"]
+                    if form.get("report_weekday") in ("mon", "tue", "wed", "thu", "fri", "sat", "sun"):
+                        updates["report_weekday"] = form["report_weekday"]
+                    if form.get("report_day_of_month"):
+                        try:
+                            updates["report_day_of_month"] = max(1, min(31, int(form["report_day_of_month"])))
+                        except ValueError:
+                            pass
                     if form.get("report_language") in ("de", "en"):
                         updates["report_language"] = form["report_language"]
-                    if "llm_prompt_template" in form:
-                        updates["llm_prompt_template"] = form["llm_prompt_template"].strip()
+                elif form_id == "prompt":
+                    # parse_qs() verwirft standardmaessig leere Werte - das Prompt-Feld
+                    # muss aber explizit leerbar sein (Fallback auf Standard-Vorlage).
+                    raw_form = parse_qs(raw, keep_blank_values=True)
+                    updates["llm_prompt_template"] = raw_form.get("llm_prompt_template", [""])[0].strip()
                 elif form_id == "logsource":
                     if form.get("log_source") in ("graylog", "unifi_direct"):
                         updates["log_source"] = form["log_source"]
