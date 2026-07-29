@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>unifi-analyzer</Name>
+  <Repository>ghcr.io/incendiumendy/unifi-analyzer:latest</Repository>
+  <Registry>https://ghcr.io/incendiumendy/unifi-analyzer</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/incendiumendy/unifi-analyzer/issues</Support>
+  <Project>https://github.com/incendiumendy/unifi-analyzer</Project>
+  <Overview>UniFi Analyzer collects your UniFi network logs (via Graylog or directly from the controller), sends them to any OpenAI-compatible LLM (LM Studio, Ollama, OpenAI, ...) for analysis, and emails you a daily report with a traffic-light status (green/yellow/red).&#13;
+&#13;
+Optional add-ons: AbuseIPDB reputation lookups for public IPs seen in the logs, automatic blocking of malicious IPs on the UniFi gateway (dry-run by default), and SearXNG-based research on unusual error messages.&#13;
+&#13;
+Everything is configured through the web UI after first start - no required environment variables. Settings are stored persistently under /data/settings.json.</Overview>
+  <Category>Network:Security:|Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8088]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/incendiumendy/unifi-analyzer/master/unraid/unifi-analyzer.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/incendiumendy/unifi-analyzer/master/unraid/icon.png</Icon>
+  <ExtraParams></ExtraParams>
+  <PostArgs></PostArgs>
+  <CPUset></CPUset>
+  <DateInstalled></DateInstalled>
+  <DonateText></DonateText>
+  <DonateLink></DonateLink>
+  <Requires></Requires>
+  <Config Name="WebUI Port" Target="8088" Default="8088" Mode="tcp" Description="Port for the web UI" Type="Port" Display="always" Required="true" Mask="false">8088</Config>
+  <Config Name="Settings" Target="/data" Default="/mnt/user/appdata/unifi-analyzer" Mode="rw" Description="Persistent settings (settings.json)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/unifi-analyzer</Config>
+  <Config Name="Timezone" Target="TZ" Default="Europe/Berlin" Mode="" Description="Timezone used for the daily schedule and log timestamps" Type="Variable" Display="always" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="LLM Endpoint" Target="LLM_BASE_URL" Default="" Mode="" Description="Optional initial value: OpenAI-compatible LLM endpoint (e.g. LM Studio/Ollama). Can also be set later in the web UI." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="LLM Model" Target="OLLAMA_MODEL" Default="" Mode="" Description="Optional initial value: model name at the LLM endpoint. Can also be set later in the web UI." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Report recipient" Target="EMAIL_TO" Default="" Mode="" Description="Optional initial value: recipient address for the daily report. Can also be set later in the web UI." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+</Container>
