@@ -99,6 +99,17 @@ PAGE = """<!DOCTYPE html>
  textarea{{width:100%;max-width:640px;background:#1b1b1f;color:#fff;border:1px solid #3a3a44;border-radius:7px;padding:9px 10px;font-size:13px;line-height:1.4;box-sizing:border-box;font-family:Consolas,monospace}}
  .btn-secondary{{background:#4a4a54;margin-left:10px}} .btn-secondary:hover{{background:#3a3a44}}
  .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:0 16px;max-width:700px}}
+ .label-row{{display:flex;align-items:center;gap:8px;margin:10px 0 4px}}
+ .label-row label{{margin:0}}
+ .help-toggle{{background:#3a3a44;color:#c7d6ea;border:1px solid #4a4a56;border-radius:50%;
+  width:20px;height:20px;line-height:18px;padding:0;margin:0;font-size:12px;font-weight:700;
+  cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none}}
+ .help-toggle:hover{{background:#4a4a54}}
+ .helpbox{{background:#1b1b1f;border:1px solid #3a3a44;border-radius:7px;padding:10px 12px;
+  margin-bottom:10px;font-size:12.5px;color:#c7c7cf;line-height:1.5;max-width:640px}}
+ .helpbox ul{{margin:6px 0 0;padding-left:18px}}
+ .btnrow{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}}
+ .btnrow button{{margin:0}}
  .grid2 label,.grid2 select,.grid2 input{{max-width:100%}}
  button{{background:#2b8aef;color:#fff;border:none;padding:11px 22px;border-radius:8px;font-size:15px;cursor:pointer;margin-top:14px}}
  button:hover{{background:#1f6fd0}} button:disabled{{background:#555;cursor:not-allowed}}
@@ -167,6 +178,11 @@ PAGE = """<!DOCTYPE html>
     if(el.value.trim() === ''){{ el.value = el.dataset.prev || ''; }}
    }}
 
+   function toggleHelp(id){{
+    const el = document.getElementById(id);
+    el.hidden = !el.hidden;
+   }}
+
    function onPromptSelect(){{
     const v = document.getElementById('promptSelect').value;
     if(!v) return;
@@ -218,22 +234,44 @@ PAGE = """<!DOCTYPE html>
     <option value="de" {lang_de_sel}>Deutsch</option>
     <option value="en" {lang_en_sel}>English</option>
    </select>
-   <label for="promptSelect">LLM-Prompt-Vorlage waehlen</label>
-   <select id="promptSelect" onchange="onPromptSelect()">
-    <option value="">-- eigener Text (unten) --</option>
-    <optgroup label="Eingebaut (Deutsch)">{preset_options_de}</optgroup>
-    <optgroup label="Eingebaut (English)">{preset_options_en}</optgroup>
-    <optgroup label="Eigene Vorlagen">{custom_prompt_options}</optgroup>
-   </select>
-   <button type="button" class="btn-secondary" onclick="addPromptToLibrary()">Hinzufuegen</button>
-   <button type="button" class="btn-secondary" onclick="updatePromptInLibrary()">Aktualisieren</button>
-   <button type="button" class="btn-secondary" onclick="deletePromptFromLibrary()">Loeschen</button>
+   <div class="label-row">
+    <label for="promptSelect" style="margin:0">LLM-Prompt-Vorlage waehlen</label>
+    <button type="button" class="help-toggle" onclick="toggleHelp('promptHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
+   </div>
+   <div id="promptHelp" class="helpbox" hidden>
+    So funktioniert die Vorlagen-Auswahl:
+    <ul>
+     <li><b>Eingebaut</b>: feste Vorlagen (Standard/Kurz/Technisch, DE/EN) - nicht veraenderbar.</li>
+     <li><b>Eigene Vorlagen</b>: eure selbst gespeicherten Texte, siehe Buttons unten.</li>
+     <li>Eine Auswahl aus der Liste laedt den Text nur in das Textfeld darunter - aktiv wird er erst,
+      wenn ihr danach auf "Speichern" klickt.</li>
+     <li><b>Hinzufuegen</b> speichert den aktuellen Textfeld-Inhalt als neue eigene Vorlage.
+      <b>Aktualisieren</b>/<b>Loeschen</b> wirken auf die aktuell im Dropdown gewaehlte eigene Vorlage.</li>
+     <li>Platzhalter im Text: <code>$threat_intel</code> (AbuseIPDB-Ergebnisse), <code>$research</code>
+      (SearXNG-Recherche), <code>$log_text</code> (die Rohlogs) - werden beim Erstellen des Reports ersetzt.</li>
+     <li>Textfeld leer lassen + Speichern = eingebaute Standard-Vorlage der gewaehlten Berichtssprache wird verwendet.</li>
+    </ul>
+   </div>
+   <div class="btnrow">
+    <select id="promptSelect" onchange="onPromptSelect()">
+     <option value="">-- eigener Text (unten) --</option>
+     <optgroup label="Eingebaut (Deutsch)">{preset_options_de}</optgroup>
+     <optgroup label="Eingebaut (English)">{preset_options_en}</optgroup>
+     <optgroup label="Eigene Vorlagen">{custom_prompt_options}</optgroup>
+    </select>
+   </div>
+   <div class="btnrow">
+    <button type="button" class="btn-secondary" onclick="addPromptToLibrary()">&#10133; Hinzufuegen</button>
+    <button type="button" class="btn-secondary" onclick="updatePromptInLibrary()">&#128260; Aktualisieren</button>
+    <button type="button" class="btn-secondary" onclick="deletePromptFromLibrary()">&#128465; Loeschen</button>
+   </div>
    <label for="prompt">Prompt-Text (Platzhalter: $threat_intel, $research, $log_text)</label>
    <textarea name="llm_prompt_template" id="prompt" rows="12">{llm_prompt_template}</textarea>
-   <br><button type="submit">&#128190; Speichern</button>
-   <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE">Standard wiederherstellen</button>
+   <div class="btnrow">
+    <button type="submit">&#128190; Speichern</button>
+    <button type="button" class="btn-secondary" onclick="document.getElementById('prompt').value = DEFAULT_PROMPT_TEMPLATE">Standard wiederherstellen</button>
+   </div>
   </form>
-  <div class="muted">Aenderungen werden persistent gespeichert und sofort wirksam (kein Neustart noetig). Prompt-Text leer lassen fuer die eingebaute Standard-Vorlage. Eine Vorlage aus dem Dropdown laedt ihren Text in das Textfeld - erst danach "Speichern" wirkt das dauerhaft als aktiver Prompt.</div>
  </div>
  <div class="card">
   <h2>Log-Quelle</h2>
@@ -367,7 +405,7 @@ def _models():
     return []
 
 
-def make_handler(cfg):
+def make_handler():
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -617,8 +655,8 @@ def make_handler(cfg):
     return Handler
 
 
-def start(cfg, port=8088):
-    handler = make_handler(cfg)
+def start(port=8088):
+    handler = make_handler()
     srv = ThreadingHTTPServer(("0.0.0.0", port), handler)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()

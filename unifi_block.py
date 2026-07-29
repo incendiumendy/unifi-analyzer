@@ -12,6 +12,7 @@ Konfiguration kommt aus appconfig (GUI-editierbar):
   unifi_block_threshold : int  - Mindest-Score zum Sperren (Default 95)
   unifi_allowlist     : str    - kommaseparierte IPs/Praefixe die NIE gesperrt werden
 """
+import copy
 import ipaddress
 import logging
 import time as _time
@@ -131,7 +132,6 @@ class UniFiClient:
         return self._post(f"/sites/{self.site_id}/firewall/policies", body)
 
     def update_policy_items(self, policy, ip_items):
-        import copy
         policy = copy.deepcopy(policy)
         pid = policy.pop("id", None)  # ID nicht im Body - kommt in der URL
         policy.pop("index", None)     # read-only

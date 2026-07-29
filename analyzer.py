@@ -7,6 +7,7 @@ Drittsystemen ueber die GUI konfigurierbar (appconfig.py / settings.json).
 """
 
 import os
+import re
 import time
 import json
 import smtplib
@@ -17,7 +18,7 @@ import webui
 import appconfig
 import unifi_block
 from string import Template
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -475,8 +476,6 @@ def format_logs_for_analysis(entries):
 
 # ── Ollama: KI-Analyse ────────────────────────────────────────────────────────
 # --- AbuseIPDB: IP-Reputation ---
-import re as _re
-
 _PRIV = ("10.", "192.168.", "127.", "169.254.")
 def _is_public_ip(ip):
     if ip.startswith(_PRIV):
@@ -489,7 +488,7 @@ def _is_public_ip(ip):
     return True
 
 def extract_public_ips(log_text, limit=5):
-    ips = _re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", log_text or "")
+    ips = re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", log_text or "")
     seen = []
     for ip in ips:
         if _is_public_ip(ip) and ip not in seen:
@@ -688,7 +687,7 @@ def parse_ampel(analysis):
     Gibt (farbschluessel_oder_None, bericht_ohne_status_zeile) zurueck."""
     lines = (analysis or "").splitlines()
     if lines:
-        m = _re.match(r"^\s*STATUS:\s*(GRUEN|GELB|ROT|GREEN|YELLOW|RED)\s*$", lines[0], _re.IGNORECASE)
+        m = re.match(r"^\s*STATUS:\s*(GRUEN|GELB|ROT|GREEN|YELLOW|RED)\s*$", lines[0], re.IGNORECASE)
         if m:
             rest = "\n".join(lines[1:]).lstrip("\n")
             return _STATUS_WORD_TO_KEY[m.group(1).lower()], rest
@@ -700,7 +699,7 @@ def _markdown_lite_to_html(text):
     in einfaches HTML um (kein vollwertiger Markdown-Parser noetig)."""
     out = []
     for line in text.split("\n"):
-        line = _re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+        line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
         if line.startswith("## "):
             out.append(f"<h3>{line[3:].strip()}</h3>")
         elif not line.strip():
@@ -934,7 +933,7 @@ if __name__ == "__main__":
         manage_prompt_library=manage_prompt_library,
     )
     try:
-        webui.start(get_settings_snapshot(), port=8088)
+        webui.start(port=8088)
         log.info("Status-WebUI laeuft auf Port 8088")
     except Exception as e:
         log.warning(f"WebUI konnte nicht gestartet werden: {e}")
