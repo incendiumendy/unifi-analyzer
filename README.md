@@ -63,7 +63,10 @@ unter `/data/settings.json` gespeichert (Pfad über `SETTINGS_PATH`
 |---|---|---|
 | `OLLAMA_MODEL` | `gemma4:12b` | Modellname am LLM-Endpoint |
 | `LLM_BASE_URL` | `http://lm-studio:1234/v1` | OpenAI-kompatibler LLM-Endpoint |
-| `REPORT_SCHEDULE` | `08:00` | Uhrzeit für den täglichen Report |
+| `REPORT_FREQUENCY` | `daily` | Häufigkeit: `daily`/`weekly`/`monthly` |
+| `REPORT_SCHEDULE` | `08:00` | Uhrzeit für den Report |
+| `REPORT_WEEKDAY` | `mon` | Wochentag bei `weekly` (`mon`..`sun`) |
+| `REPORT_DAY_OF_MONTH` | `1` | Tag im Monat bei `monthly` (1-31, wird in kürzeren Monaten geklemmt) |
 | `REPORT_LANGUAGE` | `de` | Berichtssprache (`de`/`en`) |
 | `LOG_SOURCE` | `graylog` | `graylog` oder `unifi_direct` |
 | `GRAYLOG_HOST` / `GRAYLOG_PORT` | `graylog` / `9000` | Graylog-Zugang |
