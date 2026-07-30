@@ -209,6 +209,12 @@ def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=
         }
         payload.update(_lifecycle_extra(kind, unload_after and not was_loaded))
 
+        def cleanup():
+            """Nach einem Fehlschlag aufraeumen: was wir fuer diesen Versuch
+            geladen haben, darf nicht im Speicher liegen bleiben."""
+            if unload_after and not was_loaded:
+                unload(base, kind, model)
+
         try:
             resp = requests.post(chat_url(base), json=payload, timeout=timeout)
             resp.raise_for_status()
@@ -216,7 +222,11 @@ def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=
             content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
             text = (content or "").strip()
             if not text:
-                errors.append(f"{name}: leere Antwort")
+                # Modell hat geantwortet, aber ohne Inhalt (z.B. max_tokens zu
+                # klein, um ueber einen Denk-/Vorspann-Block hinauszukommen).
+                errors.append(f"{name}: leere Antwort (max_tokens zu klein?)")
+                log.warning(f"LLM-Endpunkt '{name}' lieferte leere Antwort - naechster.")
+                cleanup()
                 continue
             info = {"endpoint": name, "base_url": base, "model": model, "kind": kind,
                     "was_loaded": was_loaded, "unloaded": False, "errors": errors}
@@ -226,12 +236,10 @@ def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=
         except requests.exceptions.ReadTimeout:
             errors.append(f"{name}: Timeout nach {timeout}s")
             log.warning(f"LLM-Endpunkt '{name}' Timeout nach {timeout}s - naechster.")
-            if unload_after and not was_loaded:
-                unload(base, kind, model)
+            cleanup()
         except Exception as e:
             errors.append(f"{name}: {e}")
             log.warning(f"LLM-Endpunkt '{name}' fehlgeschlagen: {e} - naechster.")
-            if unload_after and not was_loaded:
-                unload(base, kind, model)
+            cleanup()
 
     return None, {"endpoint": None, "errors": errors}
