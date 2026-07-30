@@ -170,7 +170,10 @@ def probe(endpoint, timeout=PROBE_TIMEOUT):
     busy = is_busy(base, kind, timeout=timeout)
     hit = bool(model) and any(model in (m or "") or (m or "") in model for m in loaded)
     parts = [kind]
-    parts.append("Modell geladen" if hit else ("nichts geladen" if not loaded else "anderes Modell geladen"))
+    if model:
+        parts.append("Modell geladen" if hit else ("nichts geladen" if not loaded else "anderes Modell geladen"))
+    else:
+        parts.append("bitte Modell aus der Liste waehlen")
     parts.append(f"{len(available)} Modell(e) waehlbar")
     if busy:
         parts.append("rechnet gerade")
@@ -190,7 +193,12 @@ def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=
         base = (ep.get("base_url") or "").strip()
         model = (ep.get("model") or "").strip()
         name = ep.get("name") or base
-        if not base or not model:
+        if not base:
+            continue
+        if not model:
+            # Nicht still uebergehen: im Report soll stehen, warum dieser
+            # Endpunkt nicht mitspielen durfte.
+            errors.append(f"{name}: kein Modell ausgewaehlt")
             continue
 
         kind = detect_kind(base)

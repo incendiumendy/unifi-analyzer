@@ -102,8 +102,11 @@ def get_llm_endpoints():
             continue
         base = (it.get("base_url") or "").strip()
         model = (it.get("model") or "").strip()
-        if not base or not model:
+        if not base:
             continue
+        # Zeilen ohne Modell bleiben in der Liste (die GUI zeigt sie weiter an
+        # und mahnt die Modellwahl an); llm_pool.chat() ueberspringt sie mit
+        # einem klaren Fehlereintrag statt sie stillschweigend zu verlieren.
         out.append({"name": (it.get("name") or f"Endpunkt {i + 1}").strip(),
                     "base_url": base, "model": model})
     if out:

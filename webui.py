@@ -282,8 +282,12 @@ PAGE = """<!DOCTYPE html>
      Faellt einer aus, uebernimmt automatisch der naechste.</li>
     <li>URL endet meist auf <code>/v1</code>, z.B. <code>http://192.168.1.111:11434/v1</code> (Ollama),
      <code>:1234/v1</code> (LM Studio), <code>:8090/v1</code> (llama.cpp).</li>
-    <li>"Endpunkte pruefen" zeigt pro Zeile: erkannte Backend-Art, ob das Modell geladen ist
-     und ob gerade gerechnet wird.</li>
+    <li><b>Neuen Endpunkt einrichten:</b> nur die URL eintragen und "Endpunkte pruefen" klicken -
+     die Modell-Liste der Zeile fuellt sich vom jeweiligen Endpunkt. Dann Modell anklicken/waehlen
+     und Speichern. Zeilen mit URL aber ohne Modell werden mitgespeichert und in der Analyse
+     uebersprungen, bis ein Modell gewaehlt ist.</li>
+    <li>"Endpunkte pruefen" prueft die aktuell eingetragenen (auch ungespeicherten) Werte und
+     zeigt pro Zeile: erkannte Backend-Art, ob das Modell geladen ist und ob gerade gerechnet wird.</li>
     <li><b>Entladen:</b> Ollama und LM Studio koennen das Modell nach der Analyse wieder aus dem
      Speicher werfen. Das passiert nur, wenn der Analyzer es selbst geladen hat - war es vorher
      schon geladen, benutzt es jemand anderes und es bleibt liegen. llama.cpp haelt sein Modell
@@ -298,8 +302,11 @@ PAGE = """<!DOCTYPE html>
      the first one reachable and not already busy writes the report. If one fails, the next takes over.</li>
     <li>URLs usually end in <code>/v1</code>, e.g. <code>http://192.168.1.111:11434/v1</code> (Ollama),
      <code>:1234/v1</code> (LM Studio), <code>:8090/v1</code> (llama.cpp).</li>
-    <li>"Check endpoints" shows per row: detected backend type, whether the model is loaded,
-     and whether it is currently generating.</li>
+    <li><b>Adding a new endpoint:</b> enter just the URL and click "Check endpoints" - the row's
+     model list is filled from that endpoint. Then pick a model and save. Rows with a URL but no
+     model are kept on save and skipped during analysis until a model is chosen.</li>
+    <li>"Check endpoints" probes the values as currently typed (even unsaved) and shows per row:
+     detected backend type, whether the model is loaded, and whether it is currently generating.</li>
     <li><b>Unloading:</b> Ollama and LM Studio can drop the model from memory after the analysis.
      This only happens if the analyzer loaded it itself - if it was already loaded, someone else
      is using it and it stays. llama.cpp keeps its model resident, which makes it a good last fallback.</li>
@@ -627,16 +634,25 @@ def _settings():
 
 
 def _endpoints_from_form(form):
-    """Liest die drei Endpunkt-Zeilen aus einem POST-Formular. Leere Zeilen
-    werden uebersprungen, die Zeilennummer aber als 'slot' mitgefuehrt, damit
-    die GUI jedes Ergebnis der richtigen Zeile zuordnen kann."""
+    """Liest die drei Endpunkt-Zeilen aus einem POST-Formular.
+
+    Jede Zeile, in der irgendetwas steht, kommt mit - auch unvollstaendige.
+    Nur so kann "Endpunkte pruefen" bei einer frisch eingetragenen URL die
+    Modell-Liste laden, BEVOR ein Modell gewaehlt ist (Henne-Ei-Problem),
+    und fuer eine Zeile ohne URL sagen, dass die URL fehlt. Voellig leere
+    Zeilen werden uebersprungen; die Zeilennummer wandert als 'slot' mit,
+    damit die GUI jedes Ergebnis der richtigen Zeile zuordnet."""
     eps = []
     for i in (1, 2, 3):
         url = (form.get(f"ep{i}_url") or "").strip()
         mdl = (form.get(f"ep{i}_model") or "").strip()
         nm = (form.get(f"ep{i}_name") or "").strip() or f"Endpunkt {i}"
-        if url and mdl:
-            eps.append({"slot": i, "name": nm, "base_url": url, "model": mdl})
+        if not url and not mdl:
+            continue
+        if url and "://" not in url:
+            # Vergessenes Schema reparieren statt an requests scheitern.
+            url = "http://" + url
+        eps.append({"slot": i, "name": nm, "base_url": url, "model": mdl})
     return eps
 
 
@@ -871,14 +887,18 @@ def make_handler():
                 if form_id == "model":
                     # Reihenfolge der Zeilen = Fallback-Reihenfolge. Immer
                     # schreiben, damit auch das Leeren einer Zeile ankommt.
+                    # Zeilen mit URL aber ohne Modell werden MITgespeichert,
+                    # damit die URL beim naechsten Seitenaufruf noch da ist
+                    # und nur noch das Modell gewaehlt werden muss.
                     eps = [{k: v for k, v in ep.items() if k != "slot"}
-                           for ep in _endpoints_from_form(form)]
+                           for ep in _endpoints_from_form(form) if ep["base_url"]]
                     updates["llm_endpoints"] = json.dumps(eps, ensure_ascii=False)
-                    if eps:
-                        # Erster Endpunkt bleibt zusaetzlich in den Einzelfeldern,
-                        # damit Status-Karte und aeltere ENV-Nutzung stimmig bleiben.
-                        updates["llm_base_url"] = eps[0]["base_url"]
-                        updates["ollama_model"] = eps[0]["model"]
+                    # Erste vollstaendige Zeile zusaetzlich in die Einzelfelder,
+                    # damit Status-Karte und aeltere ENV-Nutzung stimmig bleiben.
+                    first = next((e for e in eps if e["model"]), None)
+                    if first:
+                        updates["llm_base_url"] = first["base_url"]
+                        updates["ollama_model"] = first["model"]
                     updates["llm_unload_after"] = bool(form.get("llm_unload_after"))
                     if form.get("llm_timeout"):
                         try:
