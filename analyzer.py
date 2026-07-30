@@ -370,10 +370,23 @@ def manage_prompt_library(action, name, content=""):
     return lib
 
 
-def probe_llm_endpoints():
-    """Statusbild aller konfigurierten Endpunkte fuer die GUI: erreichbar,
-    erkannte Backend-Art, ob das Modell geladen ist und ob gerade gerechnet wird."""
-    return [llm_pool.probe(ep) for ep in get_llm_endpoints()]
+def probe_llm_endpoints(endpoints=None):
+    """Statusbild der Endpunkte fuer die GUI: erreichbar, erkannte Backend-Art,
+    ob das Modell geladen ist und ob gerade gerechnet wird.
+
+    Ohne Argument werden die gespeicherten Endpunkte geprueft. Die GUI schickt
+    stattdessen die aktuell in den Feldern stehenden Werte mit, damit man auch
+    ungespeicherte Aenderungen testen kann - sonst pruefte der Knopf den alten
+    Stand, waehrend im Formular schon etwas anderes steht."""
+    eps = get_llm_endpoints() if endpoints is None else endpoints
+    out = []
+    for i, ep in enumerate(eps):
+        result = llm_pool.probe(ep)
+        # Zeilennummer mitgeben: leere Zeilen fallen raus, sonst landet das
+        # Ergebnis von Zeile 2 unter Zeile 1.
+        result["slot"] = ep.get("slot", i + 1)
+        out.append(result)
+    return out
 
 
 def test_llm_connection(base_url=None):

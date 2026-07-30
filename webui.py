@@ -173,10 +173,21 @@ PAGE = """<!DOCTYPE html>
      const s = document.getElementById('epstatus'+i);
      if(s) s.textContent = '';
     }}
-    fetch('/probe_endpoints').then(function(r){{return r.json();}}).then(function(list){{
-     el.textContent = list.length ? 'Reihenfolge = Fallback-Reihenfolge. Der erste erreichbare Endpunkt macht die Analyse. Modell-Felder anklicken zeigt die Auswahl.' : 'Keine Endpunkte konfiguriert.';
-     list.forEach(function(d, i){{
-      const n = i+1;
+    // Die gerade eingetippten Werte mitschicken - sonst wuerde der gespeicherte
+    // (moeglicherweise veraltete) Stand geprueft.
+    const p = new URLSearchParams();
+    for(let i=1;i<=3;i++){{
+     ['name','url','model'].forEach(function(f){{
+      const inp = document.getElementsByName('ep'+i+'_'+f)[0];
+      p.append('ep'+i+'_'+f, inp ? inp.value : '');
+     }});
+    }}
+    fetch('/probe_endpoints', {{method:'POST',
+      headers:{{'Content-Type':'application/x-www-form-urlencoded'}},
+      body: p.toString()}}).then(function(r){{return r.json();}}).then(function(list){{
+     el.textContent = list.length ? 'Geprueft wurden die aktuell eingetragenen Werte - zum Aktivieren noch "Speichern" klicken. Modell-Felder anklicken zeigt die Auswahl.' : 'Keine Endpunkte eingetragen (URL und Modell noetig).';
+     list.forEach(function(d){{
+      const n = d.slot;
       const s = document.getElementById('epstatus'+n);
       if(s){{
        s.textContent = (d.ok ? '\\u2713 ' : '\\u2717 ') + d.name + ': ' + d.message;
@@ -615,6 +626,20 @@ def _settings():
     return dict(_SETTINGS_DEFAULTS)
 
 
+def _endpoints_from_form(form):
+    """Liest die drei Endpunkt-Zeilen aus einem POST-Formular. Leere Zeilen
+    werden uebersprungen, die Zeilennummer aber als 'slot' mitgefuehrt, damit
+    die GUI jedes Ergebnis der richtigen Zeile zuordnen kann."""
+    eps = []
+    for i in (1, 2, 3):
+        url = (form.get(f"ep{i}_url") or "").strip()
+        mdl = (form.get(f"ep{i}_model") or "").strip()
+        nm = (form.get(f"ep{i}_name") or "").strip() or f"Endpunkt {i}"
+        if url and mdl:
+            eps.append({"slot": i, "name": nm, "base_url": url, "model": mdl})
+    return eps
+
+
 def make_handler():
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -780,6 +805,18 @@ def make_handler():
             self.end_headers()
             self.wfile.write(b)
 
+        def _send_probe(self, endpoints=None):
+            try:
+                result = _probe_endpoints(endpoints) if _probe_endpoints else []
+            except Exception as e:  # noqa
+                result = [{"name": "Fehler", "ok": False, "message": str(e), "slot": 1}]
+            body = json.dumps(result).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def _redirect(self, loc="/"):
             self.send_response(303)
             self.send_header("Location", loc)
@@ -796,16 +833,7 @@ def make_handler():
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": STATE["last_status"]}).encode())
             elif self.path == "/probe_endpoints":
-                try:
-                    result = _probe_endpoints() if _probe_endpoints else []
-                except Exception as e:  # noqa
-                    result = [{"name": "Fehler", "ok": False, "message": str(e)}]
-                body = json.dumps(result).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                self._send_probe()
             elif self.path.startswith("/test_llm"):
                 qs = parse_qs(urlparse(self.path).query)
                 base_url = (qs.get("base_url") or [""])[0]
@@ -829,6 +857,11 @@ def make_handler():
             if self.path == "/run":
                 _trigger_run()
                 self._redirect("/")
+            elif self.path == "/probe_endpoints":
+                # Prueft die Werte, die gerade im Formular stehen - auch
+                # ungespeicherte. Sonst meldet der Knopf den alten Stand,
+                # waehrend im Feld daneben schon etwas anderes steht.
+                self._send_probe(_endpoints_from_form(form))
             elif self.path == "/settings":
                 # form_id trennt die getrennten Karten/Formulare, damit das Speichern
                 # einer Karte nicht Felder einer anderen Karte (z.B. Checkboxen,
@@ -836,17 +869,12 @@ def make_handler():
                 form_id = form.get("form_id", "")
                 updates = {}
                 if form_id == "model":
-                    # Endpunkt-Slots einsammeln; nur Zeilen mit URL und Modell
-                    # zaehlen, die Reihenfolge ist die Fallback-Reihenfolge.
-                    eps = []
-                    for i in (1, 2, 3):
-                        url = (form.get(f"ep{i}_url") or "").strip()
-                        mdl = (form.get(f"ep{i}_model") or "").strip()
-                        nm = (form.get(f"ep{i}_name") or "").strip() or f"Endpunkt {i}"
-                        if url and mdl:
-                            eps.append({"name": nm, "base_url": url, "model": mdl})
+                    # Reihenfolge der Zeilen = Fallback-Reihenfolge. Immer
+                    # schreiben, damit auch das Leeren einer Zeile ankommt.
+                    eps = [{k: v for k, v in ep.items() if k != "slot"}
+                           for ep in _endpoints_from_form(form)]
+                    updates["llm_endpoints"] = json.dumps(eps, ensure_ascii=False)
                     if eps:
-                        updates["llm_endpoints"] = json.dumps(eps, ensure_ascii=False)
                         # Erster Endpunkt bleibt zusaetzlich in den Einzelfeldern,
                         # damit Status-Karte und aeltere ENV-Nutzung stimmig bleiben.
                         updates["llm_base_url"] = eps[0]["base_url"]
