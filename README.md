@@ -9,7 +9,11 @@ konfigurierbar, kein Neustart nötig.
 ## Features
 
 - **Log-Quelle**: Graylog oder direkt vom UniFi-Controller (Beta)
-- **Analyse** durch ein frei wählbares OpenAI-kompatibles LLM
+- **Analyse** durch bis zu drei OpenAI-kompatible LLM-Endpunkte mit **Fallback-Kette**
+  (z. B. Ollama → LM Studio → llama.cpp): der erste erreichbare und nicht ausgelastete
+  Endpunkt schreibt den Bericht
+- **Modell wird nur für die Analyse geladen** und danach wieder entladen (Ollama/LM Studio) –
+  aber nur, wenn der Analyzer es selbst geladen hat, damit anderen Nutzern nichts weggenommen wird
 - **Täglicher Report per E-Mail** (SMTP, Design hell/dunkel/automatisch) mit
   Ampel-Status
 - **AbuseIPDB**-Reputationsprüfung für erkannte öffentliche IPs im Log
@@ -62,7 +66,9 @@ unter `/data/settings.json` gespeichert (Pfad über `SETTINGS_PATH`
 | Variable | Standard | Bedeutung |
 |---|---|---|
 | `OLLAMA_MODEL` | `gemma4:12b` | Modellname am LLM-Endpoint |
-| `LLM_BASE_URL` | `http://lm-studio:1234/v1` | OpenAI-kompatibler LLM-Endpoint |
+| `LLM_BASE_URL` | `http://lm-studio:1234/v1` | OpenAI-kompatibler LLM-Endpoint (Endpunkt 1, wenn `LLM_ENDPOINTS` leer ist) |
+| `LLM_ENDPOINTS` | `[]` | Fallback-Kette als JSON, z. B. `[{"name":"Ollama","base_url":"http://host:11434/v1","model":"gemma4"},{"name":"llama.cpp","base_url":"http://host:8090/v1","model":"qwen"}]` |
+| `LLM_UNLOAD_AFTER` | `true` | Modell nach der Analyse entladen (nur wenn selbst geladen) |
 | `LLM_TIMEOUT` | `600` | Sekunden, die auf die LLM-Antwort gewartet wird (lokale CPU-Inferenz braucht oft mehrere Minuten) |
 | `LLM_MAX_TOKENS` | `4096` | Maximale Länge der Modell-Antwort |
 | `REPORT_FREQUENCY` | `daily` | Häufigkeit: `daily`/`weekly`/`monthly` |

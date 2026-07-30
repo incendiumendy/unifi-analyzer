@@ -28,6 +28,7 @@ _list_models = None
 _apply_settings = None
 _test_llm = None
 _manage_prompt_library = None
+_probe_endpoints = None
 _lock = threading.Lock()
 
 
@@ -37,13 +38,16 @@ def set_run_callback(cb):
 
 
 def set_settings_callbacks(get_settings=None, list_models=None, apply_settings=None,
-                            test_llm=None, manage_prompt_library=None):
+                            test_llm=None, manage_prompt_library=None,
+                            probe_endpoints=None):
     global _get_settings, _list_models, _apply_settings, _test_llm, _manage_prompt_library
+    global _probe_endpoints
     _get_settings = get_settings
     _list_models = list_models
     _apply_settings = apply_settings
     _test_llm = test_llm
     _manage_prompt_library = manage_prompt_library
+    _probe_endpoints = probe_endpoints
 
 
 def record_start():
@@ -115,6 +119,12 @@ PAGE = """<!DOCTYPE html>
  .helpbox ul{{margin:6px 0 0;padding-left:18px}}
  .btnrow{{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}}
  .btnrow button{{margin:0}}
+ .epgrid{{display:grid;grid-template-columns:22px 1.1fr 2fr 1.7fr;gap:6px 10px;align-items:center;
+  max-width:820px;margin-bottom:6px}}
+ .epgrid input{{max-width:100%;margin:0}}
+ .epgrid-head{{color:#8a8a95;font-size:12px;margin-top:8px}}
+ .epnum{{color:#8fb7ef;font-weight:700;font-size:13px}}
+ .eprow-status{{grid-column:2 / -1;font-size:12px;color:#9a9aa5;margin:-2px 0 4px}}
  .grid2 label,.grid2 select,.grid2 input{{max-width:100%}}
  button{{background:#2b8aef;color:#fff;border:none;padding:11px 22px;border-radius:8px;font-size:15px;cursor:pointer;margin-top:14px}}
  button:hover{{background:#1f6fd0}} button:disabled{{background:#555;cursor:not-allowed}}
@@ -148,7 +158,7 @@ PAGE = """<!DOCTYPE html>
   <div class="row"><span class="k">AbuseIPDB</span><span class="v {abuseclass}">{abuse}</span></div>
  </div>
  <div class="card">
-  <h2>KI-Modell</h2>
+  <h2>KI-Modelle &amp; Fallback-Kette</h2>
   <script>
    const DEFAULT_PROMPT_TEMPLATE = {default_prompt_json};
    const PRESET_TEMPLATES = {preset_templates_json};
@@ -158,7 +168,7 @@ PAGE = """<!DOCTYPE html>
     const el = document.getElementById('llmTestResult');
     el.textContent = 'Teste Verbindung...';
     el.style.color = '#9a9aa5';
-    const url = document.getElementById('llmurl').value;
+    const url = document.getElementById('ep1_url').value;
     fetch('/test_llm?base_url=' + encodeURIComponent(url)).then(function(r){{return r.json();}}).then(function(data){{
      el.textContent = data.message;
      el.style.color = data.ok ? '#3ecf6b' : '#ef5350';
@@ -171,6 +181,25 @@ PAGE = """<!DOCTYPE html>
        dl.appendChild(opt);
       }});
      }}
+    }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
+   }}
+
+   function probeEndpoints(){{
+    const el = document.getElementById('llmTestResult');
+    el.textContent = 'Pruefe Endpunkte...';
+    el.style.color = '#9a9aa5';
+    for(let i=1;i<=3;i++){{
+     const s = document.getElementById('epstatus'+i);
+     if(s) s.textContent = '';
+    }}
+    fetch('/probe_endpoints').then(function(r){{return r.json();}}).then(function(list){{
+     el.textContent = list.length ? 'Reihenfolge = Fallback-Reihenfolge. Der erste erreichbare Endpunkt macht die Analyse.' : 'Keine Endpunkte konfiguriert.';
+     list.forEach(function(d, i){{
+      const s = document.getElementById('epstatus'+(i+1));
+      if(!s) return;
+      s.textContent = (d.ok ? '\\u2713 ' : '\\u2717 ') + d.name + ': ' + d.message;
+      s.style.color = d.ok ? '#3ecf6b' : '#ef5350';
+     }});
     }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
    }}
 
@@ -237,38 +266,57 @@ PAGE = """<!DOCTYPE html>
    }}
   </script>
   <div class="label-row">
-   <span style="color:#9a9aa5;font-size:13px">Wo das Sprachmodell fuer die Analyse laeuft</span>
+   <span style="color:#9a9aa5;font-size:13px">Endpunkte in Fallback-Reihenfolge - der erste erreichbare macht die Analyse</span>
    <button type="button" class="help-toggle" onclick="toggleHelp('modelHelp')" aria-label="Hilfe anzeigen" title="Hilfe anzeigen">?</button>
   </div>
   <div id="modelHelp" class="helpbox" hidden>
    <b>Deutsch:</b>
    <ul>
-    <li>LLM-Endpoint: OpenAI-kompatible API-Adresse eures lokalen oder entfernten Modells (z.B. LM Studio, Ollama mit /v1-Kompatibilitaet, OpenAI). Endet meist auf <code>/v1</code>.</li>
-    <li>"Verbindung testen" laedt die am Endpoint verfuegbaren Modelle in die Modell-Liste.</li>
-    <li>Modell: Name des zu verwendenden Modells - frei eintragbar, falls es nicht in der Liste erscheint.</li>
-    <li>Timeout: wie lange auf die Antwort gewartet wird. Lokale CPU-Inferenz (llama.cpp/Ollama ohne GPU)
-     braucht fuer einen langen Bericht oft mehrere Minuten - bei "Read timed out" diesen Wert erhoehen.</li>
+    <li>Ihr koennt bis zu drei OpenAI-kompatible Endpunkte eintragen. Sie werden <b>von oben nach unten</b>
+     durchprobiert: der erste, der erreichbar ist und nicht gerade rechnet, erstellt den Bericht.
+     Faellt einer aus, uebernimmt automatisch der naechste.</li>
+    <li>URL endet meist auf <code>/v1</code>, z.B. <code>http://192.168.1.111:11434/v1</code> (Ollama),
+     <code>:1234/v1</code> (LM Studio), <code>:8090/v1</code> (llama.cpp).</li>
+    <li>"Endpunkte pruefen" zeigt pro Zeile: erkannte Backend-Art, ob das Modell geladen ist
+     und ob gerade gerechnet wird.</li>
+    <li><b>Entladen:</b> Ollama und LM Studio koennen das Modell nach der Analyse wieder aus dem
+     Speicher werfen. Das passiert nur, wenn der Analyzer es selbst geladen hat - war es vorher
+     schon geladen, benutzt es jemand anderes und es bleibt liegen. llama.cpp haelt sein Modell
+     dauerhaft und eignet sich deshalb gut als letzter Fallback.</li>
+    <li>Timeout: wie lange auf die Antwort gewartet wird. Lokale CPU-Inferenz braucht fuer einen
+     langen Bericht oft mehrere Minuten - bei "Read timed out" diesen Wert erhoehen.</li>
     <li>Max. Antwort-Tokens: Laenge der Antwort. Kleinerer Wert = schnellerer, kuerzerer Bericht.</li>
    </ul>
    <b>English:</b>
    <ul>
-    <li>LLM endpoint: OpenAI-compatible API address of your local or remote model (e.g. LM Studio, Ollama with /v1 compatibility, OpenAI). Usually ends in <code>/v1</code>.</li>
-    <li>"Test connection" loads the models available at that endpoint into the model list.</li>
-    <li>Model: name of the model to use - you can type a custom one if it isn't listed.</li>
-    <li>Timeout: how long to wait for the response. Local CPU inference (llama.cpp/Ollama without GPU)
-     often needs several minutes for a long report - raise this on "Read timed out".</li>
+    <li>You can configure up to three OpenAI-compatible endpoints. They are tried <b>top to bottom</b>:
+     the first one reachable and not already busy writes the report. If one fails, the next takes over.</li>
+    <li>URLs usually end in <code>/v1</code>, e.g. <code>http://192.168.1.111:11434/v1</code> (Ollama),
+     <code>:1234/v1</code> (LM Studio), <code>:8090/v1</code> (llama.cpp).</li>
+    <li>"Check endpoints" shows per row: detected backend type, whether the model is loaded,
+     and whether it is currently generating.</li>
+    <li><b>Unloading:</b> Ollama and LM Studio can drop the model from memory after the analysis.
+     This only happens if the analyzer loaded it itself - if it was already loaded, someone else
+     is using it and it stays. llama.cpp keeps its model resident, which makes it a good last fallback.</li>
+    <li>Timeout: how long to wait for the response. Local CPU inference often needs several minutes
+     for a long report - raise this on "Read timed out".</li>
     <li>Max response tokens: length of the answer. Lower value = faster, shorter report.</li>
    </ul>
   </div>
   <form method="POST" action="/settings">
    <input type="hidden" name="form_id" value="model">
-   <label for="llmurl">LLM-Endpoint (OpenAI-kompatibel, z.B. LM Studio/Ollama/OpenAI)</label>
-   <input type="text" name="llm_base_url" id="llmurl" value="{llm_base_url}" placeholder="http://lm-studio:1234/v1">
-   <button type="button" class="btn-secondary" onclick="testLLM()">Verbindung testen &amp; Modelle laden</button>
+   <div class="epgrid epgrid-head">
+    <div>#</div><div>Name</div><div>Endpoint-URL</div><div>Modell</div>
+   </div>
+   {endpoint_rows}
+   <div class="btnrow">
+    <button type="button" class="btn-secondary" onclick="probeEndpoints()">&#128269; Endpunkte pruefen</button>
+    <button type="button" class="btn-secondary" onclick="testLLM()">Modelle von Endpunkt 1 laden</button>
+   </div>
    <div id="llmTestResult" class="muted"></div>
-   <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
-   <input type="text" name="ollama_model" id="model" list="model_list" value="{model}" onfocus="onModelFocus(this)" onblur="onModelBlur(this)">
    <datalist id="model_list">{model_options}</datalist>
+   <label><input type="checkbox" name="llm_unload_after" value="1" {unload_after}>
+    Modell nach der Analyse wieder entladen (nur wenn der Analyzer es selbst geladen hat)</label>
    <div class="grid2">
     <div><label for="llmto">Timeout in Sekunden (wie lange auf die Antwort gewartet wird)</label>
      <input type="number" name="llm_timeout" id="llmto" min="30" max="3600" value="{llm_timeout}"></div>
@@ -553,6 +601,7 @@ _SETTINGS_DEFAULTS = {
     "graylog_host": "graylog", "graylog_port": "9000",
     "graylog_user": "admin", "graylog_password": "",
     "llm_base_url": "", "llm_timeout": 600, "llm_max_tokens": 4096,
+    "llm_endpoints": [], "llm_unload_after": True,
     "abuseipdb_key": "", "searxng_url": "",
     "llm_prompt_template": "", "llm_prompt_template_default": "",
     "llm_prompt_presets": {}, "llm_prompt_preset_labels": {}, "llm_prompt_library": {},
@@ -642,6 +691,30 @@ def make_handler():
             status_json = json.dumps(status).replace("</", "<\\/")
             report_language = st.get("report_language") or "de"
 
+            # Drei Endpunkt-Slots: vorhandene Konfiguration auffuellen, Rest leer.
+            eps = list(st.get("llm_endpoints") or [])
+            ep_rows = []
+            for i in range(3):
+                ep = eps[i] if i < len(eps) else {}
+                idx = i + 1
+                label = "primaer" if i == 0 else "Fallback"
+                ep_rows.append(
+                    '<div class="epgrid">'
+                    '<div class="epnum" title="{lbl}">{n}</div>'
+                    '<div><input type="text" name="ep{n}_name" value="{nm}" placeholder="{ph}"></div>'
+                    '<div><input type="text" name="ep{n}_url" id="ep{n}_url" value="{url}" placeholder="http://host:11434/v1"></div>'
+                    '<div><input type="text" name="ep{n}_model" list="model_list" value="{mdl}" placeholder="Modellname"></div>'
+                    '<div class="eprow-status" id="epstatus{n}"></div>'
+                    '</div>'.format(
+                        n=idx, lbl=label,
+                        nm=html.escape(str(ep.get("name") or "")),
+                        url=html.escape(str(ep.get("base_url") or "")),
+                        mdl=html.escape(str(ep.get("model") or "")),
+                        ph=("Ollama" if i == 0 else ("LM Studio" if i == 1 else "llama.cpp")),
+                    )
+                )
+            endpoint_rows = "".join(ep_rows)
+
             frequency = st.get("report_frequency") or "daily"
             weekday = st.get("report_weekday") or "mon"
             weekday_options = "".join(
@@ -673,7 +746,8 @@ def make_handler():
                 ampel_badge=ampel_badge,
                 disabled=("disabled" if STATE["running"] else ""),
                 log_source_label=("UniFi direkt" if log_source == "unifi_direct" else "Graylog"),
-                llm_base_url=esc("llm_base_url"),
+                endpoint_rows=endpoint_rows,
+                unload_after=("checked" if st.get("llm_unload_after") else ""),
                 llm_timeout=esc("llm_timeout", "600"),
                 llm_max_tokens=esc("llm_max_tokens", "4096"),
                 ls_graylog_sel=("selected" if log_source == "graylog" else ""),
@@ -738,6 +812,17 @@ def make_handler():
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": STATE["last_status"]}).encode())
+            elif self.path == "/probe_endpoints":
+                try:
+                    result = _probe_endpoints() if _probe_endpoints else []
+                except Exception as e:  # noqa
+                    result = [{"name": "Fehler", "ok": False, "message": str(e)}]
+                body = json.dumps(result).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif self.path.startswith("/test_llm"):
                 qs = parse_qs(urlparse(self.path).query)
                 base_url = (qs.get("base_url") or [""])[0]
@@ -768,10 +853,22 @@ def make_handler():
                 form_id = form.get("form_id", "")
                 updates = {}
                 if form_id == "model":
-                    if form.get("llm_base_url"):
-                        updates["llm_base_url"] = form["llm_base_url"].strip()
-                    if form.get("ollama_model"):
-                        updates["ollama_model"] = form["ollama_model"].strip()
+                    # Endpunkt-Slots einsammeln; nur Zeilen mit URL und Modell
+                    # zaehlen, die Reihenfolge ist die Fallback-Reihenfolge.
+                    eps = []
+                    for i in (1, 2, 3):
+                        url = (form.get(f"ep{i}_url") or "").strip()
+                        mdl = (form.get(f"ep{i}_model") or "").strip()
+                        nm = (form.get(f"ep{i}_name") or "").strip() or f"Endpunkt {i}"
+                        if url and mdl:
+                            eps.append({"name": nm, "base_url": url, "model": mdl})
+                    if eps:
+                        updates["llm_endpoints"] = json.dumps(eps, ensure_ascii=False)
+                        # Erster Endpunkt bleibt zusaetzlich in den Einzelfeldern,
+                        # damit Status-Karte und aeltere ENV-Nutzung stimmig bleiben.
+                        updates["llm_base_url"] = eps[0]["base_url"]
+                        updates["ollama_model"] = eps[0]["model"]
+                    updates["llm_unload_after"] = bool(form.get("llm_unload_after"))
                     if form.get("llm_timeout"):
                         try:
                             updates["llm_timeout"] = max(30, min(3600, int(form["llm_timeout"])))

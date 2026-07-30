@@ -18,6 +18,7 @@ import schedule
 import webui
 import appconfig
 import unifi_block
+import llm_pool
 from string import Template
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -76,6 +77,38 @@ def get_llm_max_tokens():
         return max(256, int(appconfig.get("llm_max_tokens") or 4096))
     except (TypeError, ValueError):
         return 4096
+
+
+def get_llm_unload_after():
+    """Ob das Modell nach der Analyse wieder entladen werden soll. Betrifft nur
+    Modelle, die der Analyzer selbst geladen hat - siehe llm_pool.chat()."""
+    val = appconfig.get("llm_unload_after")
+    return bool(val) if isinstance(val, bool) else str(val).lower() in ("1", "true", "on", "yes")
+
+
+def get_llm_endpoints():
+    """Fallback-Kette als Liste. Ist nichts gepflegt, wird die klassische
+    Einzelkonfiguration (llm_base_url + ollama_model) als einziger Endpunkt
+    benutzt - so laufen bestehende Installationen unveraendert weiter."""
+    raw = appconfig.get("llm_endpoints") or "[]"
+    try:
+        items = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except Exception:
+        log.warning("llm_endpoints ist kein gueltiges JSON - benutze Einzelkonfiguration.")
+        items = []
+    out = []
+    for i, it in enumerate(items if isinstance(items, list) else []):
+        if not isinstance(it, dict):
+            continue
+        base = (it.get("base_url") or "").strip()
+        model = (it.get("model") or "").strip()
+        if not base or not model:
+            continue
+        out.append({"name": (it.get("name") or f"Endpunkt {i + 1}").strip(),
+                    "base_url": base, "model": model})
+    if out:
+        return out
+    return [{"name": "Standard", "base_url": get_llm_base_url(), "model": get_active_model()}]
 
 
 # Standard-Prompts und -Betreff (GUI-editierbar via appconfig, Platzhalter im
@@ -335,6 +368,12 @@ def manage_prompt_library(action, name, content=""):
         lib[name] = content
     appconfig.save({"llm_prompt_library": json.dumps(lib, ensure_ascii=False)})
     return lib
+
+
+def probe_llm_endpoints():
+    """Statusbild aller konfigurierten Endpunkte fuer die GUI: erreichbar,
+    erkannte Backend-Art, ob das Modell geladen ist und ob gerade gerechnet wird."""
+    return [llm_pool.probe(ep) for ep in get_llm_endpoints()]
 
 
 def test_llm_connection(base_url=None):
@@ -667,36 +706,29 @@ def analyze_with_llm(log_text, entries=None):
     )
 
     timeout = get_llm_timeout()
+    endpoints = get_llm_endpoints()
     started = time.time()
-    try:
-        resp = requests.post(
-            f"{get_llm_base_url()}/chat/completions",
-            json={
-                "model": get_active_model(),
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-                "max_tokens": get_llm_max_tokens(),
-                "stream": False,
-            },
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
-        result = (content or "").strip() or "Keine Antwort vom Modell."
-        log.info(f"Analyse abgeschlossen ({len(result)} Zeichen, {time.time() - started:.0f}s).")
+
+    result, info = llm_pool.chat(
+        prompt, endpoints,
+        timeout=timeout,
+        max_tokens=get_llm_max_tokens(),
+        unload_after=get_llm_unload_after(),
+    )
+
+    if result:
+        log.info(f"Analyse abgeschlossen ueber '{info['endpoint']}' "
+                 f"({len(result)} Zeichen, {time.time() - started:.0f}s"
+                 f"{', Modell wieder entladen' if info.get('unloaded') else ''}).")
         return result
-    except requests.exceptions.ReadTimeout:
-        # Haeufigster Fall bei lokaler CPU-Inferenz: das Modell rechnet noch, wir
-        # geben aber auf. Klartext-Hinweis statt roher Exception, damit im Report
-        # steht was zu tun ist.
-        log.error(f"LLM-Antwort nach {timeout}s Timeout abgebrochen ({get_llm_base_url()}).")
-        return (f"Fehler bei der KI-Analyse: Das Modell hat nicht innerhalb von {timeout} Sekunden "
-                f"geantwortet.\n\nMoegliche Abhilfe: Timeout in der GUI unter 'KI-Modell' erhoehen, "
-                f"ein kleineres/schnelleres Modell waehlen, oder 'Max. Antwort-Tokens' reduzieren.")
-    except Exception as e:
-        log.error(f"Fehler bei der LLM-Analyse: {e}")
-        return f"Fehler bei der KI-Analyse: {e}"
+
+    # Kein Endpunkt hat geliefert - im Report steht, woran es bei welchem lag.
+    details = "\n".join(f"  - {e}" for e in info.get("errors") or []) or "  - keine Endpunkte konfiguriert"
+    log.error(f"Kein LLM-Endpunkt hat geantwortet:\n{details}")
+    return ("Fehler bei der KI-Analyse: Kein LLM-Endpunkt hat geantwortet.\n\n"
+            f"Versuchte Endpunkte:\n{details}\n\n"
+            "Moegliche Abhilfe: Timeout erhoehen, 'Max. Antwort-Tokens' reduzieren, "
+            "oder einen schnelleren Fallback-Endpunkt eintragen (GUI: 'KI-Modell').")
 
 
 # ── Ampel-Status parsen (STATUS: GRUEN/GELB/ROT oder GREEN/YELLOW/RED) ───────
@@ -969,6 +1001,8 @@ def get_settings_snapshot():
         "llm_base_url": cfg.get("llm_base_url"),
         "llm_timeout": get_llm_timeout(),
         "llm_max_tokens": get_llm_max_tokens(),
+        "llm_unload_after": get_llm_unload_after(),
+        "llm_endpoints": get_llm_endpoints(),
         "abuseipdb_key": cfg.get("abuseipdb_key"),
         "searxng_url": cfg.get("searxng_url"),
         "report_language": get_report_language(),
@@ -1028,6 +1062,7 @@ if __name__ == "__main__":
         apply_settings=apply_settings,
         test_llm=test_llm_connection,
         manage_prompt_library=manage_prompt_library,
+        probe_endpoints=probe_llm_endpoints,
     )
     try:
         webui.start(port=8088)

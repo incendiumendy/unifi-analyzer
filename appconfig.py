@@ -11,7 +11,7 @@ _lock = threading.Lock()
 # Schluessel, die ueber die GUI editierbar sind
 _EDITABLE = ("ollama_model", "report_schedule", "report_frequency", "report_weekday",
              "report_day_of_month", "report_language", "llm_base_url", "llm_timeout",
-             "llm_max_tokens", "abuseipdb_key",
+             "llm_max_tokens", "llm_endpoints", "llm_unload_after", "abuseipdb_key",
              "searxng_url", "llm_prompt_template", "llm_prompt_library",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
@@ -35,6 +35,11 @@ _DEFAULTS = {
     # fuer einen langen Bericht schnell mehr als die frueher fest verdrahteten 120s.
     "llm_timeout": int(os.getenv("LLM_TIMEOUT", "600")),
     "llm_max_tokens": int(os.getenv("LLM_MAX_TOKENS", "4096")),
+    # Fallback-Kette als JSON-Liste [{name, base_url, model}, ...]. Leer =
+    # es wird die einzelne llm_base_url/ollama_model-Konfiguration benutzt
+    # (siehe get_llm_endpoints() in analyzer.py).
+    "llm_endpoints": os.getenv("LLM_ENDPOINTS", "[]"),
+    "llm_unload_after": os.getenv("LLM_UNLOAD_AFTER", "1") in ("1", "true", "True", "on"),
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
     "searxng_url": os.getenv("SEARXNG_URL", ""),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", ""),
