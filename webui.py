@@ -24,7 +24,6 @@ _WEEKDAY_LABELS_DE = [
 
 _run_callback = None
 _get_settings = None
-_list_models = None
 _apply_settings = None
 _test_llm = None
 _manage_prompt_library = None
@@ -37,13 +36,12 @@ def set_run_callback(cb):
     _run_callback = cb
 
 
-def set_settings_callbacks(get_settings=None, list_models=None, apply_settings=None,
+def set_settings_callbacks(get_settings=None, apply_settings=None,
                             test_llm=None, manage_prompt_library=None,
                             probe_endpoints=None):
-    global _get_settings, _list_models, _apply_settings, _test_llm, _manage_prompt_library
+    global _get_settings, _apply_settings, _test_llm, _manage_prompt_library
     global _probe_endpoints
     _get_settings = get_settings
-    _list_models = list_models
     _apply_settings = apply_settings
     _test_llm = test_llm
     _manage_prompt_library = manage_prompt_library
@@ -167,26 +165,6 @@ PAGE = """<!DOCTYPE html>
    const PRESET_TEMPLATES = {preset_templates_json};
    const CUSTOM_TEMPLATES = {custom_templates_json};
 
-   function testLLM(){{
-    const el = document.getElementById('llmTestResult');
-    el.textContent = 'Teste Verbindung...';
-    el.style.color = '#9a9aa5';
-    const url = document.getElementById('ep1_url').value;
-    fetch('/test_llm?base_url=' + encodeURIComponent(url)).then(function(r){{return r.json();}}).then(function(data){{
-     el.textContent = data.message;
-     el.style.color = data.ok ? '#3ecf6b' : '#ef5350';
-     if(data.ok && data.models && data.models.length){{
-      const dl = document.getElementById('model_list');
-      dl.innerHTML = '';
-      data.models.forEach(function(m){{
-       const opt = document.createElement('option');
-       opt.value = m;
-       dl.appendChild(opt);
-      }});
-     }}
-    }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
-   }}
-
    function probeEndpoints(){{
     const el = document.getElementById('llmTestResult');
     el.textContent = 'Pruefe Endpunkte...';
@@ -196,12 +174,25 @@ PAGE = """<!DOCTYPE html>
      if(s) s.textContent = '';
     }}
     fetch('/probe_endpoints').then(function(r){{return r.json();}}).then(function(list){{
-     el.textContent = list.length ? 'Reihenfolge = Fallback-Reihenfolge. Der erste erreichbare Endpunkt macht die Analyse.' : 'Keine Endpunkte konfiguriert.';
+     el.textContent = list.length ? 'Reihenfolge = Fallback-Reihenfolge. Der erste erreichbare Endpunkt macht die Analyse. Modell-Felder anklicken zeigt die Auswahl.' : 'Keine Endpunkte konfiguriert.';
      list.forEach(function(d, i){{
-      const s = document.getElementById('epstatus'+(i+1));
-      if(!s) return;
-      s.textContent = (d.ok ? '\\u2713 ' : '\\u2717 ') + d.name + ': ' + d.message;
-      s.style.color = d.ok ? '#3ecf6b' : '#ef5350';
+      const n = i+1;
+      const s = document.getElementById('epstatus'+n);
+      if(s){{
+       s.textContent = (d.ok ? '\\u2713 ' : '\\u2717 ') + d.name + ': ' + d.message;
+       s.style.color = d.ok ? '#3ecf6b' : '#ef5350';
+      }}
+      // Jede Zeile bekommt die Modelle IHRES Endpunkts - die Backends
+      // kennen unterschiedliche Modelle.
+      const dl = document.getElementById('model_list'+n);
+      if(dl && d.available){{
+       dl.innerHTML = '';
+       d.available.forEach(function(m){{
+        const o = document.createElement('option');
+        o.value = m;
+        dl.appendChild(o);
+       }});
+      }}
      }});
     }}).catch(function(e){{ el.textContent = 'Fehler: ' + e; el.style.color = '#ef5350'; }});
    }}
@@ -313,11 +304,9 @@ PAGE = """<!DOCTYPE html>
    </div>
    {endpoint_rows}
    <div class="btnrow">
-    <button type="button" class="btn-secondary" onclick="probeEndpoints()">&#128269; Endpunkte pruefen</button>
-    <button type="button" class="btn-secondary" onclick="testLLM()">Modelle von Endpunkt 1 laden</button>
+    <button type="button" class="btn-secondary" onclick="probeEndpoints()">&#128269; Endpunkte pruefen &amp; Modelle laden</button>
    </div>
    <div id="llmTestResult" class="muted"></div>
-   <datalist id="model_list">{model_options}</datalist>
    <label><input type="checkbox" name="llm_unload_after" value="1" {unload_after}>
     Modell nach der Analyse wieder entladen (nur wenn der Analyzer es selbst geladen hat)</label>
    <div class="grid2">
@@ -626,15 +615,6 @@ def _settings():
     return dict(_SETTINGS_DEFAULTS)
 
 
-def _models():
-    if _list_models:
-        try:
-            return _list_models() or []
-        except Exception:
-            pass
-    return []
-
-
 def make_handler():
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -643,13 +623,6 @@ def make_handler():
         def _render(self, flash=""):
             st = _settings()
             cur_model = st.get("model", "-")
-            models = _models()
-            if cur_model not in models and cur_model not in ("-", None):
-                models = [cur_model] + models
-            opts = "".join(
-                '<option value="{0}">'.format(html.escape(m))
-                for m in models
-            )
 
             report = STATE["last_report"] or "(noch kein Report vorhanden)"
             status = STATE["last_status"]
@@ -706,7 +679,10 @@ def make_handler():
                     '<div class="epnum" title="{lbl}">{n}</div>'
                     '<div><input type="text" name="ep{n}_name" value="{nm}" placeholder="{ph}"></div>'
                     '<div><input type="text" name="ep{n}_url" id="ep{n}_url" value="{url}" placeholder="http://host:11434/v1"></div>'
-                    '<div><input type="text" name="ep{n}_model" list="model_list" value="{mdl}" placeholder="Modellname"></div>'
+                    '<div><input type="text" name="ep{n}_model" id="ep{n}_model" list="model_list{n}"'
+                    ' value="{mdl}" placeholder="Modellname"'
+                    ' onfocus="onModelFocus(this)" onblur="onModelBlur(this)">'
+                    '<datalist id="model_list{n}">{opt}</datalist></div>'
                     '<div class="eprow-status" id="epstatus{n}"></div>'
                     '</div>'.format(
                         n=idx, lbl=label,
@@ -714,6 +690,11 @@ def make_handler():
                         url=html.escape(str(ep.get("base_url") or "")),
                         mdl=html.escape(str(ep.get("model") or "")),
                         ph=("Ollama" if i == 0 else ("LM Studio" if i == 1 else "llama.cpp")),
+                        # Vorbelegung: das eingetragene Modell. Die vollstaendige
+                        # Auswahl holt "Endpunkte pruefen" pro Zeile beim jeweils
+                        # eigenen Endpunkt - die Backends kennen ja verschiedene Modelle.
+                        opt=('<option value="{0}">'.format(html.escape(str(ep.get("model"))))
+                             if ep.get("model") else ""),
                     )
                 )
             endpoint_rows = "".join(ep_rows)
@@ -744,7 +725,6 @@ def make_handler():
                 model=html.escape(str(cur_model)),
                 abuse=("aktiv" if abuse_active else "nicht konfiguriert"),
                 abuseclass=("ok" if abuse_active else "warn"),
-                model_options=opts,
                 report=html.escape(report),
                 ampel_badge=ampel_badge,
                 disabled=("disabled" if STATE["running"] else ""),

@@ -928,17 +928,6 @@ def _scheduled_tick():
         log.info(f"Kein Report faellig heute (Haeufigkeit={get_report_frequency()}).")
 
 
-def list_ollama_models():
-    """Holt die am konfigurierten LLM-Endpoint geladenen Modelle (OpenAI-kompatible API)."""
-    try:
-        r = requests.get(f"{get_llm_base_url()}/models", timeout=10)
-        r.raise_for_status()
-        models = [m.get("id") for m in r.json().get("data", []) if m.get("id")]
-        return sorted(models)
-    except Exception as e:
-        log.warning(f"LM-Studio-Modell-Liste konnte nicht geladen werden: {e}")
-        return []
-
 def apply_settings(updates):
     """Speichert Settings und setzt den Zeitplan live neu."""
     appconfig.save(updates)
@@ -1058,7 +1047,6 @@ if __name__ == "__main__":
     webui.set_run_callback(run_analysis)
     webui.set_settings_callbacks(
         get_settings=get_settings_snapshot,
-        list_models=list_ollama_models,
         apply_settings=apply_settings,
         test_llm=test_llm_connection,
         manage_prompt_library=manage_prompt_library,

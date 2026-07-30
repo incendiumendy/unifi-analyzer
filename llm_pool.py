@@ -65,14 +65,22 @@ def detect_kind(base_url, timeout=PROBE_TIMEOUT):
     return "openai"
 
 
-def is_reachable(base_url, timeout=PROBE_TIMEOUT):
+def available_models(base_url, timeout=PROBE_TIMEOUT):
+    """Alle am Endpunkt anwaehlbaren Modelle - nicht zwingend geladene.
+    None (statt leerer Liste) heisst: Endpunkt nicht erreichbar."""
     base = (base_url or "").rstrip("/")
     if not base.endswith("/v1"):
         base += "/v1"
     try:
-        return requests.get(base + "/models", timeout=timeout).status_code == 200
+        r = requests.get(base + "/models", timeout=timeout)
+        r.raise_for_status()
+        return [m.get("id") for m in r.json().get("data", []) if m.get("id")]
     except Exception:
-        return False
+        return None
+
+
+def is_reachable(base_url, timeout=PROBE_TIMEOUT):
+    return available_models(base_url, timeout=timeout) is not None
 
 
 def loaded_models(base_url, kind, timeout=PROBE_TIMEOUT):
@@ -152,21 +160,23 @@ def probe(endpoint, timeout=PROBE_TIMEOUT):
     model = endpoint.get("model") or ""
     if not base:
         return {"name": name, "base_url": base, "ok": False, "kind": "-",
-                "message": "Keine URL hinterlegt", "loaded": [], "busy": False}
+                "message": "Keine URL hinterlegt", "loaded": [], "available": [], "busy": False}
     kind = detect_kind(base, timeout=timeout)
-    ok = is_reachable(base, timeout=timeout)
-    if not ok:
+    available = available_models(base, timeout=timeout)
+    if available is None:
         return {"name": name, "base_url": base, "ok": False, "kind": kind,
-                "message": "nicht erreichbar", "loaded": [], "busy": False}
+                "message": "nicht erreichbar", "loaded": [], "available": [], "busy": False}
     loaded = loaded_models(base, kind, timeout=timeout)
     busy = is_busy(base, kind, timeout=timeout)
     hit = bool(model) and any(model in (m or "") or (m or "") in model for m in loaded)
     parts = [kind]
     parts.append("Modell geladen" if hit else ("nichts geladen" if not loaded else "anderes Modell geladen"))
+    parts.append(f"{len(available)} Modell(e) waehlbar")
     if busy:
         parts.append("rechnet gerade")
     return {"name": name, "base_url": base, "ok": True, "kind": kind,
-            "message": ", ".join(parts), "loaded": [m for m in loaded if m], "busy": busy}
+            "message": ", ".join(parts), "loaded": [m for m in loaded if m],
+            "available": sorted(available), "busy": busy}
 
 
 def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=0.3):
