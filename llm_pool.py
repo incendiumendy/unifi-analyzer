@@ -48,11 +48,16 @@ def chat_url(base_url):
 
 
 def detect_kind(base_url, timeout=PROBE_TIMEOUT):
-    """Erkennt die Backend-Art anhand ihrer typischen Zusatz-Endpunkte."""
+    """Erkennt die Backend-Art anhand ihrer typischen Zusatz-Endpunkte.
+
+    Reihenfolge ist wichtig: LM Studio beantwortet auch den Ollama-
+    Kompatibilitaetspfad /api/tags und wuerde mit Ollama-zuerst als
+    'ollama' erkannt - dann liefe das Entladen ueber den falschen
+    Mechanismus. /api/v0/models gibt es nur bei LM Studio, also zuerst."""
     root = api_root(base_url)
     probes = (
-        ("ollama", "/api/tags"),
         ("lmstudio", "/api/v0/models"),
+        ("ollama", "/api/tags"),
         ("llamacpp", "/props"),
     )
     for kind, path in probes:
