@@ -246,12 +246,18 @@ PAGE = """<!DOCTYPE html>
     <li>LLM-Endpoint: OpenAI-kompatible API-Adresse eures lokalen oder entfernten Modells (z.B. LM Studio, Ollama mit /v1-Kompatibilitaet, OpenAI). Endet meist auf <code>/v1</code>.</li>
     <li>"Verbindung testen" laedt die am Endpoint verfuegbaren Modelle in die Modell-Liste.</li>
     <li>Modell: Name des zu verwendenden Modells - frei eintragbar, falls es nicht in der Liste erscheint.</li>
+    <li>Timeout: wie lange auf die Antwort gewartet wird. Lokale CPU-Inferenz (llama.cpp/Ollama ohne GPU)
+     braucht fuer einen langen Bericht oft mehrere Minuten - bei "Read timed out" diesen Wert erhoehen.</li>
+    <li>Max. Antwort-Tokens: Laenge der Antwort. Kleinerer Wert = schnellerer, kuerzerer Bericht.</li>
    </ul>
    <b>English:</b>
    <ul>
     <li>LLM endpoint: OpenAI-compatible API address of your local or remote model (e.g. LM Studio, Ollama with /v1 compatibility, OpenAI). Usually ends in <code>/v1</code>.</li>
     <li>"Test connection" loads the models available at that endpoint into the model list.</li>
     <li>Model: name of the model to use - you can type a custom one if it isn't listed.</li>
+    <li>Timeout: how long to wait for the response. Local CPU inference (llama.cpp/Ollama without GPU)
+     often needs several minutes for a long report - raise this on "Read timed out".</li>
+    <li>Max response tokens: length of the answer. Lower value = faster, shorter report.</li>
    </ul>
   </div>
   <form method="POST" action="/settings">
@@ -263,6 +269,12 @@ PAGE = """<!DOCTYPE html>
    <label for="model">Modell (aus dem Endpoint geladen, oder frei eintragen)</label>
    <input type="text" name="ollama_model" id="model" list="model_list" value="{model}" onfocus="onModelFocus(this)" onblur="onModelBlur(this)">
    <datalist id="model_list">{model_options}</datalist>
+   <div class="grid2">
+    <div><label for="llmto">Timeout in Sekunden (wie lange auf die Antwort gewartet wird)</label>
+     <input type="number" name="llm_timeout" id="llmto" min="30" max="3600" value="{llm_timeout}"></div>
+    <div><label for="llmmt">Max. Antwort-Tokens</label>
+     <input type="number" name="llm_max_tokens" id="llmmt" min="256" max="32768" value="{llm_max_tokens}"></div>
+   </div>
    <br><button type="submit">&#128190; Speichern</button>
   </form>
  </div>
@@ -540,7 +552,8 @@ _SETTINGS_DEFAULTS = {
     "log_source": "graylog",
     "graylog_host": "graylog", "graylog_port": "9000",
     "graylog_user": "admin", "graylog_password": "",
-    "llm_base_url": "", "abuseipdb_key": "", "searxng_url": "",
+    "llm_base_url": "", "llm_timeout": 600, "llm_max_tokens": 4096,
+    "abuseipdb_key": "", "searxng_url": "",
     "llm_prompt_template": "", "llm_prompt_template_default": "",
     "llm_prompt_presets": {}, "llm_prompt_preset_labels": {}, "llm_prompt_library": {},
     "smtp_host": "", "smtp_port": 465, "smtp_user": "", "smtp_password": "",
@@ -661,6 +674,8 @@ def make_handler():
                 disabled=("disabled" if STATE["running"] else ""),
                 log_source_label=("UniFi direkt" if log_source == "unifi_direct" else "Graylog"),
                 llm_base_url=esc("llm_base_url"),
+                llm_timeout=esc("llm_timeout", "600"),
+                llm_max_tokens=esc("llm_max_tokens", "4096"),
                 ls_graylog_sel=("selected" if log_source == "graylog" else ""),
                 ls_unifi_sel=("selected" if log_source == "unifi_direct" else ""),
                 graylog_host=esc("graylog_host", "graylog"),
@@ -757,6 +772,16 @@ def make_handler():
                         updates["llm_base_url"] = form["llm_base_url"].strip()
                     if form.get("ollama_model"):
                         updates["ollama_model"] = form["ollama_model"].strip()
+                    if form.get("llm_timeout"):
+                        try:
+                            updates["llm_timeout"] = max(30, min(3600, int(form["llm_timeout"])))
+                        except ValueError:
+                            pass
+                    if form.get("llm_max_tokens"):
+                        try:
+                            updates["llm_max_tokens"] = max(256, min(32768, int(form["llm_max_tokens"])))
+                        except ValueError:
+                            pass
                 elif form_id == "schedule":
                     if form.get("report_schedule"):
                         updates["report_schedule"] = form["report_schedule"]

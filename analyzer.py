@@ -62,6 +62,22 @@ def get_email_to():
     return appconfig.get("email_to") or ""
 
 
+def get_llm_timeout():
+    """Sekunden, die auf die LLM-Antwort gewartet wird. Lokale CPU-Inferenz braucht
+    fuer einen ausfuehrlichen Bericht deutlich laenger als eine GPU/Cloud-API."""
+    try:
+        return max(30, int(appconfig.get("llm_timeout") or 600))
+    except (TypeError, ValueError):
+        return 600
+
+
+def get_llm_max_tokens():
+    try:
+        return max(256, int(appconfig.get("llm_max_tokens") or 4096))
+    except (TypeError, ValueError):
+        return 4096
+
+
 # Standard-Prompts und -Betreff (GUI-editierbar via appconfig, Platzhalter im
 # $name-Format via string.Template; safe_substitute ignoriert unbekannte
 # Platzhalter, damit ein individuell angepasstes Template nie einen Absturz
@@ -650,6 +666,8 @@ def analyze_with_llm(log_text, entries=None):
         threat_intel=threat_intel, research=research, log_text=log_text[:8000]
     )
 
+    timeout = get_llm_timeout()
+    started = time.time()
     try:
         resp = requests.post(
             f"{get_llm_base_url()}/chat/completions",
@@ -657,17 +675,25 @@ def analyze_with_llm(log_text, entries=None):
                 "model": get_active_model(),
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.3,
-                "max_tokens": 4096,
+                "max_tokens": get_llm_max_tokens(),
                 "stream": False,
             },
-            timeout=120,
+            timeout=timeout,
         )
         resp.raise_for_status()
         data = resp.json()
         content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
         result = (content or "").strip() or "Keine Antwort vom Modell."
-        log.info(f"Analyse abgeschlossen ({len(result)} Zeichen).")
+        log.info(f"Analyse abgeschlossen ({len(result)} Zeichen, {time.time() - started:.0f}s).")
         return result
+    except requests.exceptions.ReadTimeout:
+        # Haeufigster Fall bei lokaler CPU-Inferenz: das Modell rechnet noch, wir
+        # geben aber auf. Klartext-Hinweis statt roher Exception, damit im Report
+        # steht was zu tun ist.
+        log.error(f"LLM-Antwort nach {timeout}s Timeout abgebrochen ({get_llm_base_url()}).")
+        return (f"Fehler bei der KI-Analyse: Das Modell hat nicht innerhalb von {timeout} Sekunden "
+                f"geantwortet.\n\nMoegliche Abhilfe: Timeout in der GUI unter 'KI-Modell' erhoehen, "
+                f"ein kleineres/schnelleres Modell waehlen, oder 'Max. Antwort-Tokens' reduzieren.")
     except Exception as e:
         log.error(f"Fehler bei der LLM-Analyse: {e}")
         return f"Fehler bei der KI-Analyse: {e}"
@@ -941,6 +967,8 @@ def get_settings_snapshot():
         "graylog_user": cfg.get("graylog_user"),
         "graylog_password": cfg.get("graylog_password"),
         "llm_base_url": cfg.get("llm_base_url"),
+        "llm_timeout": get_llm_timeout(),
+        "llm_max_tokens": get_llm_max_tokens(),
         "abuseipdb_key": cfg.get("abuseipdb_key"),
         "searxng_url": cfg.get("searxng_url"),
         "report_language": get_report_language(),

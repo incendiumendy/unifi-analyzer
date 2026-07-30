@@ -63,6 +63,8 @@ unter `/data/settings.json` gespeichert (Pfad über `SETTINGS_PATH`
 |---|---|---|
 | `OLLAMA_MODEL` | `gemma4:12b` | Modellname am LLM-Endpoint |
 | `LLM_BASE_URL` | `http://lm-studio:1234/v1` | OpenAI-kompatibler LLM-Endpoint |
+| `LLM_TIMEOUT` | `600` | Sekunden, die auf die LLM-Antwort gewartet wird (lokale CPU-Inferenz braucht oft mehrere Minuten) |
+| `LLM_MAX_TOKENS` | `4096` | Maximale Länge der Modell-Antwort |
 | `REPORT_FREQUENCY` | `daily` | Häufigkeit: `daily`/`weekly`/`monthly` |
 | `REPORT_SCHEDULE` | `08:00` | Uhrzeit für den Report |
 | `REPORT_WEEKDAY` | `mon` | Wochentag bei `weekly` (`mon`..`sun`) |

@@ -10,7 +10,8 @@ _lock = threading.Lock()
 
 # Schluessel, die ueber die GUI editierbar sind
 _EDITABLE = ("ollama_model", "report_schedule", "report_frequency", "report_weekday",
-             "report_day_of_month", "report_language", "llm_base_url", "abuseipdb_key",
+             "report_day_of_month", "report_language", "llm_base_url", "llm_timeout",
+             "llm_max_tokens", "abuseipdb_key",
              "searxng_url", "llm_prompt_template", "llm_prompt_library",
              "log_source",
              "graylog_host", "graylog_port", "graylog_user", "graylog_password",
@@ -30,6 +31,10 @@ _DEFAULTS = {
     "report_day_of_month": int(os.getenv("REPORT_DAY_OF_MONTH", "1")),  # 1-31, nur bei monthly
     "report_language": os.getenv("REPORT_LANGUAGE", "de"),
     "llm_base_url": os.getenv("LLM_BASE_URL", os.getenv("LM_STUDIO_BASE_URL", "http://lm-studio:1234/v1")),
+    # Antwortzeit des LLM. Lokale CPU-Inferenz (llama.cpp/Ollama ohne GPU) braucht
+    # fuer einen langen Bericht schnell mehr als die frueher fest verdrahteten 120s.
+    "llm_timeout": int(os.getenv("LLM_TIMEOUT", "600")),
+    "llm_max_tokens": int(os.getenv("LLM_MAX_TOKENS", "4096")),
     "abuseipdb_key": os.getenv("ABUSEIPDB_KEY", ""),
     "searxng_url": os.getenv("SEARXNG_URL", ""),
     "llm_prompt_template": os.getenv("LLM_PROMPT_TEMPLATE", ""),
