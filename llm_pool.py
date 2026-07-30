@@ -219,13 +219,23 @@ def chat(prompt, endpoints, timeout, max_tokens, unload_after=True, temperature=
             resp = requests.post(chat_url(base), json=payload, timeout=timeout)
             resp.raise_for_status()
             data = resp.json()
-            content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
-            text = (content or "").strip()
+            choice = (data.get("choices") or [{}])[0]
+            msg = choice.get("message") or {}
+            text = (msg.get("content") or "").strip()
             if not text:
-                # Modell hat geantwortet, aber ohne Inhalt (z.B. max_tokens zu
-                # klein, um ueber einen Denk-/Vorspann-Block hinauszukommen).
-                errors.append(f"{name}: leere Antwort (max_tokens zu klein?)")
-                log.warning(f"LLM-Endpunkt '{name}' lieferte leere Antwort - naechster.")
+                # Denkmodelle (z.B. gemma4:*-it-qat, deepseek-r1) schreiben ihren
+                # Gedankengang in ein eigenes 'reasoning'-Feld und fuellen
+                # 'content' erst danach. Reicht max_tokens nicht bis dorthin,
+                # bricht die Antwort mit finish_reason=length ab und der Inhalt
+                # bleibt leer - das ist kein defekter Endpunkt, sondern ein zu
+                # kleines Budget.
+                if msg.get("reasoning") and choice.get("finish_reason") == "length":
+                    why = ("Denkmodell hat das Token-Budget beim Nachdenken aufgebraucht - "
+                           "'Max. Antwort-Tokens' erhoehen")
+                else:
+                    why = "leere Antwort"
+                errors.append(f"{name}: {why}")
+                log.warning(f"LLM-Endpunkt '{name}': {why} - naechster.")
                 cleanup()
                 continue
             info = {"endpoint": name, "base_url": base, "model": model, "kind": kind,
