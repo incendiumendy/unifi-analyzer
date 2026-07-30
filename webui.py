@@ -126,6 +126,9 @@ PAGE = """<!DOCTYPE html>
  .epnum{{color:#8fb7ef;font-weight:700;font-size:13px}}
  .eprow-status{{grid-column:2 / -1;font-size:12px;color:#9a9aa5;margin:-2px 0 4px}}
  .grid2 label,.grid2 select,.grid2 input{{max-width:100%}}
+ /* Eingabefelder unten buendig halten, auch wenn ein Label zweizeilig umbricht */
+ .grid2>div{{display:flex;flex-direction:column;justify-content:flex-end}}
+ .grid2>div>label{{margin-top:10px}}
  button{{background:#2b8aef;color:#fff;border:none;padding:11px 22px;border-radius:8px;font-size:15px;cursor:pointer;margin-top:14px}}
  button:hover{{background:#1f6fd0}} button:disabled{{background:#555;cursor:not-allowed}}
  .btn-run{{background:#1f9d57}} .btn-run:hover{{background:#178045}}
@@ -318,7 +321,7 @@ PAGE = """<!DOCTYPE html>
    <label><input type="checkbox" name="llm_unload_after" value="1" {unload_after}>
     Modell nach der Analyse wieder entladen (nur wenn der Analyzer es selbst geladen hat)</label>
    <div class="grid2">
-    <div><label for="llmto">Timeout in Sekunden (wie lange auf die Antwort gewartet wird)</label>
+    <div><label for="llmto">Timeout in Sekunden</label>
      <input type="number" name="llm_timeout" id="llmto" min="30" max="3600" value="{llm_timeout}"></div>
     <div><label for="llmmt">Max. Antwort-Tokens</label>
      <input type="number" name="llm_max_tokens" id="llmmt" min="256" max="32768" value="{llm_max_tokens}"></div>
